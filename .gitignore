@@ -1,0 +1,36 @@
+# --- Secrets: never commit these -------------------------------------------
+# Real vault files live next to their inventory but stay out of this public
+# repository. Only *.example files with fake values are tracked.
+ansible/inventories/*/group_vars/all/vault.yml
+ansible/inventories/*/group_vars/*/vault.yml
+*.vault-pass
+.vault_pass*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+
+# Private environments are created by copying production.example.
+ansible/inventories/production/
+ansible/inventories/*/host_vars/*.local.yml
+ansible/inventories/development/host_vars/
+
+# --- Generated output -------------------------------------------------------
+reports/
+ansible/reports/
+*.retry
+.ansible/
+ansible/collections/
+
+# --- Local tooling ----------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+.cache/
+.vscode/
+.idea/
+
+# Project brief used while building the repository
+.goal.txt

@@ -1,0 +1,6 @@
+# Everything here runs on Linux. Keep LF line endings in the working tree
+# even on Windows checkouts with core.autocrlf=true, or shell scripts and
+# templates rendered onto servers break with stray carriage returns.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
