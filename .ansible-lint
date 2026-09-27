@@ -1,0 +1,14 @@
+---
+# Run from the repository root with the project's ansible.cfg so roles resolve:
+#   ANSIBLE_CONFIG=ansible/ansible.cfg ansible-lint
+profile: production
+
+exclude_paths:
+  - .github/
+  - .venv/
+  - ansible/collections/
+
+kinds:
+  - playbook: "ansible/playbooks/*.yml"
+  - tasks: "ansible/playbooks/tasks/*.yml"
+  - vars: "ansible/inventories/*/group_vars/**/*.yml"
