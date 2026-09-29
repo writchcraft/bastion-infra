@@ -1,0 +1,65 @@
+---
+# Environment configuration for the development VM.
+#
+# Role defaults live in ansible/roles/*/defaults/main.yml. Only values that are
+# specific to this environment belong here. Secrets are kept in vault.yml
+# (encrypted, git-ignored) and only referenced by name below.
+# See docs/configuration.md for every variable and docs/secrets.md for vault.
+
+# --- Connection ---------------------------------------------------------------
+# bootstrap.yml connects once as the image's default user to create the admin
+# account. Every later run (server.yml, verify.yml) connects as that admin.
+bootstrap_user: ubuntu
+bastion_admin_user: deploy
+ansible_user: "{{ bastion_admin_user }}"
+
+# Public key installed for the admin user, read from the control machine.
+bastion_admin_public_key_file: ~/.ssh/id_ed25519.pub
+
+# --- Feature switches -----------------------------------------------------------
+enable_docker: true
+enable_postgres: true
+enable_monitoring: true
+
+# --- System baseline ------------------------------------------------------------
+server_timezone: Europe/London
+server_locale: en_GB.UTF-8
+
+# --- Users ------------------------------------------------------------------------
+admin_users:
+  - name: "{{ bastion_admin_user }}"
+    comment: Bastion administrator
+    ssh_keys:
+      - "{{ lookup('ansible.builtin.file', bastion_admin_public_key_file) }}"
+    sudo: true
+    sudo_nopasswd: true
+
+# Multipass relies on the default "ubuntu" account for `multipass shell`, so
+# it is left enabled here. SSH logins for it are still refused, because only
+# members of the SSH access group may log in.
+users_disabled_accounts: []
+
+# --- SSH and firewall ---------------------------------------------------------------
+ssh_port: 22
+firewall_ssh_allowed_sources:
+  - any
+firewall_rules: []
+
+# --- Docker -------------------------------------------------------------------------
+docker_users:
+  - "{{ bastion_admin_user }}"
+
+# --- PostgreSQL ---------------------------------------------------------------------
+postgres_version: 16
+postgres_users:
+  - name: app
+    password: "{{ vault_postgres_app_password }}"
+postgres_databases:
+  - name: app
+    owner: app
+# Remote clients allowed to reach PostgreSQL. Empty = local connections only.
+postgres_allowed_networks: []
+
+# --- Monitoring ---------------------------------------------------------------------
+monitoring_domain: ""
+monitoring_grafana_admin_password: "{{ vault_grafana_admin_password }}"
