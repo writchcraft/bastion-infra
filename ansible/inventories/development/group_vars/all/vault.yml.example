@@ -1,0 +1,15 @@
+---
+# Example secrets for the development inventory. FAKE VALUES ONLY.
+#
+# Create the real, encrypted vault.yml next to this file with:
+#   scripts/init-vault.sh development
+# which replaces every CHANGE_ME with a random value and encrypts the result.
+#
+# Or by hand:
+#   cp vault.yml.example vault.yml
+#   $EDITOR vault.yml
+#   ansible-vault encrypt vault.yml
+#
+# vault.yml is git-ignored. See docs/secrets.md.
+vault_grafana_admin_password: CHANGE_ME
+vault_postgres_app_password: CHANGE_ME
