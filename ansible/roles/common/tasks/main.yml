@@ -1,0 +1,162 @@
+---
+# --- Identity -------------------------------------------------------------------
+
+- name: Set the hostname
+  ansible.builtin.hostname:
+    name: "{{ common_hostname }}"
+    use: systemd
+  when: common_manage_hostname
+
+- name: Resolve the hostname locally
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ common_hostname }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_manage_hostname
+
+- name: Check whether cloud-init is present
+  ansible.builtin.stat:
+    path: /etc/cloud/cloud.cfg.d
+  register: common_cloud_init
+
+# Without this, cloud-init resets the hostname from instance metadata on boot.
+- name: Stop cloud-init from overriding the managed hostname
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-bastion-hostname.cfg
+    content: |
+      # Managed by Ansible (bastion-infra): the hostname is set by the common role.
+      preserve_hostname: true
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - common_manage_hostname
+    - common_cloud_init.stat.exists
+
+- name: Set the timezone
+  community.general.timezone:
+    name: "{{ common_timezone }}"
+  notify: Restart cron
+
+- name: Generate the system locale
+  community.general.locale_gen:
+    name: "{{ common_locale }}"
+    state: present
+
+- name: Set the default locale
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: "^LANG="
+    line: "LANG={{ common_locale }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- Packages ------------------------------------------------------------------
+
+- name: Refresh the apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ common_apt_cache_valid_time }}"
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ common_packages + common_extra_packages }}"
+    state: present
+
+# force_apt_get uses `apt-get upgrade --with-new-pkgs`: new dependencies such
+# as kernels are installed, but nothing is removed.
+- name: Apply pending package upgrades
+  ansible.builtin.apt:
+    upgrade: safe
+    force_apt_get: true
+  when: common_upgrade_packages
+
+- name: Check whether a reboot is pending
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: common_reboot_required
+
+- name: Reboot to finish applying upgrades
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ common_reboot_timeout }}"
+    msg: Rebooting to apply package upgrades (bastion-infra common role)
+  when:
+    - common_reboot_required.stat.exists
+    - common_reboot_if_required | bool
+
+- name: Report a pending reboot that was not performed
+  ansible.builtin.debug:
+    msg: >-
+      A reboot is pending (/var/run/reboot-required) but common_reboot_if_required is false.
+      Reboot during a maintenance window, or rerun with -e common_reboot_if_required=true.
+  when:
+    - common_reboot_required.stat.exists
+    - not (common_reboot_if_required | bool)
+
+# --- Time synchronisation -------------------------------------------------------
+
+- name: Gather installed package facts
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: Configure systemd-timesyncd
+  when: "'chrony' not in ansible_facts.packages"
+  block:
+    - name: Install systemd-timesyncd
+      ansible.builtin.apt:
+        name: systemd-timesyncd
+        state: present
+
+    - name: Create the timesyncd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/timesyncd.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Configure NTP servers
+      ansible.builtin.template:
+        src: timesyncd.conf.j2
+        dest: /etc/systemd/timesyncd.conf.d/50-bastion.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart systemd-timesyncd
+
+    - name: Enable systemd-timesyncd
+      ansible.builtin.systemd_service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+
+- name: Keep the existing chrony time service running
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true
+    state: started
+  when: "'chrony' in ansible_facts.packages"
+
+# --- Logging --------------------------------------------------------------------
+
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure persistent, size-capped journald storage
+  ansible.builtin.template:
+    src: journald.conf.j2
+    dest: /etc/systemd/journald.conf.d/50-bastion.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart systemd-journald
