@@ -1,0 +1,45 @@
+---
+# Hostname defaults to the inventory name so hosts match the inventory.
+common_manage_hostname: true
+common_hostname: "{{ inventory_hostname_short }}"
+
+common_timezone: "{{ server_timezone | default('Etc/UTC') }}"
+common_locale: "{{ server_locale | default('en_US.UTF-8') }}"
+
+# Packages every server gets. Keep this list short and justified.
+common_packages:
+  - acl             # lets Ansible become unprivileged users such as postgres
+  - ca-certificates
+  - curl
+  - gnupg
+  - htop
+  - jq
+  - lsof
+  - python3-debian  # required by ansible.builtin.deb822_repository
+  - rsync
+  - tmux
+  - unzip
+  - vim
+common_extra_packages: []
+
+common_apt_cache_valid_time: 3600
+
+# Apply pending package upgrades on every run. A server with nothing to
+# upgrade reports "ok", so this does not break idempotency.
+common_upgrade_packages: true
+
+# A pending reboot (/var/run/reboot-required) is reported, never acted on,
+# unless this is true. Rebooting production hosts should be a decision.
+common_reboot_if_required: false
+common_reboot_timeout: 600
+
+# systemd-timesyncd servers. If chrony is already installed (common on cloud
+# images with a hypervisor clock source) it is left in charge instead.
+common_ntp_servers:
+  - ntp.ubuntu.com
+common_ntp_fallback_servers:
+  - 0.ubuntu.pool.ntp.org
+  - 1.ubuntu.pool.ntp.org
+
+# Keep the journal on disk, but cap it so logs cannot fill the root disk.
+common_journald_system_max_use: 1G
