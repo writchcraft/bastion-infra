@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+#
+# Members of the "sudo" group may already run any command after entering
+# their password (Ubuntu's /etc/sudoers). Only passwordless rules are listed
+# here, one per administrator, so each grant is explicit and reviewable.
+{% for user in users_admin_users if user.state | default('present') == 'present'
+   and user.sudo | default(true)
+   and user.sudo_nopasswd | default(users_default_sudo_nopasswd) %}
+{{ user.name }} ALL=(ALL:ALL) NOPASSWD: ALL
+{% else %}
+# No passwordless sudo rules configured.
+{% endfor %}

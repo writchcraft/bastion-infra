@@ -1,0 +1,36 @@
+---
+# Administrator accounts. Provided by the inventory; nothing is hardcoded here.
+#
+# admin_users:
+#   - name: alice                  # required
+#     comment: Alice Example       # optional GECOS field
+#     ssh_keys: ["ssh-ed25519 AAAA... alice@laptop"]   # required unless absent
+#     shell: /bin/bash             # default: users_default_shell
+#     groups: [adm]                # extra groups that already exist
+#     sudo: true                   # default: true
+#     sudo_nopasswd: true          # default: users_default_sudo_nopasswd
+#     password_hash: "{{ vault_alice_password_hash }}"   # needed when sudo asks for a password
+#     state: present               # present | absent (absent keeps the home directory)
+#
+# The inventory sets admin_users (shared with the ssh role and verify.yml);
+# this role reads it through its own prefixed name.
+users_admin_users: "{{ admin_users | default([]) }}"
+
+users_default_shell: /bin/bash
+
+# Key-only administrators have no password, so sudo cannot ask for one.
+# Set false (per user or globally) and supply password_hash to require one.
+users_default_sudo_nopasswd: true
+
+# Only members of this group may log in over SSH (enforced by the ssh role).
+users_ssh_group: sshusers
+
+# Remove authorized keys that are not listed in admin_users. This makes the
+# inventory the single source of truth for who can log in.
+users_exclusive_keys: true
+
+# Existing accounts to lock (password locked, account expired, nologin
+# shell). Nothing is deleted. The account Ansible is connected as is skipped.
+users_disabled_accounts: []
+
+users_sudoers_file: /etc/sudoers.d/bastion-admins

@@ -1,0 +1,112 @@
+---
+- name: Validate admin user definitions
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name is match('^[a-z_][a-z0-9_-]{0,31}$')
+      - (item.state | default('present')) in ['present', 'absent']
+      - (item.state | default('present')) == 'absent' or (item.ssh_keys | default([]) | length) > 0
+      - (item.ssh_keys | default([]) | select('search', 'REPLACE_ME') | list | length) == 0
+      - (item.password_hash | default('')) is not search('REPLACE_ME')
+      - >-
+        not (item.sudo | default(true)) or (item.state | default('present')) == 'absent'
+        or (item.sudo_nopasswd | default(users_default_sudo_nopasswd)) or item.password_hash is defined
+    fail_msg: >-
+      admin_users entry "{{ item.name | default('<missing name>') }}" is invalid. Each user needs a valid
+      lowercase name, at least one real SSH public key (placeholders containing REPLACE_ME are rejected),
+      and a password_hash if sudo should ask for a password.
+    quiet: true
+  loop: "{{ users_admin_users }}"
+  loop_control:
+    label: "{{ item.name | default('<missing name>') }}"
+
+- name: Refuse to remove or disable the account Ansible is connected as
+  ansible.builtin.assert:
+    that:
+      - bastion_connection_user | default('') not in (users_admin_users | selectattr('state', 'defined')
+        | selectattr('state', 'equalto', 'absent') | map(attribute='name'))
+    fail_msg: >-
+      {{ bastion_connection_user }} is marked absent in admin_users but is the account running this play.
+      Connect as a different administrator first.
+    quiet: true
+
+- name: Create the SSH access group
+  ansible.builtin.group:
+    name: "{{ users_ssh_group }}"
+    system: true
+    state: present
+
+- name: Create administrator accounts
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment | default(omit) }}"
+    shell: "{{ item.shell | default(users_default_shell) }}"
+    groups: "{{ ([users_ssh_group] + (['sudo'] if item.sudo | default(true) else []) + item.groups | default([])) }}"
+    append: true
+    create_home: true
+    password: "{{ item.password_hash | default(omit) }}"
+    update_password: always
+    state: present
+  loop: "{{ users_admin_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.state | default('present') == 'present'
+  no_log: "{{ item.password_hash is defined }}"
+
+- name: Install authorized SSH keys
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "{{ item.ssh_keys | join('\n') }}"
+    exclusive: "{{ users_exclusive_keys }}"
+    state: present
+  loop: "{{ users_admin_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.state | default('present') == 'present'
+
+- name: Grant sudo rights
+  ansible.builtin.template:
+    src: sudoers.j2
+    dest: "{{ users_sudoers_file }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+# Home directories are kept: they may hold data nobody has reviewed yet.
+- name: Remove administrator accounts marked absent
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    state: absent
+    remove: false
+  loop: "{{ users_admin_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.state | default('present') == 'absent'
+
+# --- Default accounts ---------------------------------------------------------------
+
+- name: Read the local account database
+  ansible.builtin.getent:
+    database: passwd
+  when: users_disabled_accounts | length > 0
+
+- name: Lock unwanted default accounts
+  ansible.builtin.user:
+    name: "{{ item }}"
+    password_lock: true
+    # 1970-01-02. Day 0 is avoided because shadow(5) treats it ambiguously.
+    expires: 86400
+    shell: /usr/sbin/nologin
+  loop: "{{ users_disabled_accounts }}"
+  when:
+    - item in ansible_facts.getent_passwd
+    - item != bastion_connection_user | default('')
+    - item not in (users_admin_users | map(attribute='name'))
+
+- name: Report accounts left enabled because Ansible is using them
+  ansible.builtin.debug:
+    msg: >-
+      {{ bastion_connection_user }} is listed in users_disabled_accounts but is the account running
+      this play, so it was left enabled. It will be locked on the next run as {{ bastion_admin_user | default('an admin') }}.
+  when: bastion_connection_user | default('') in users_disabled_accounts
