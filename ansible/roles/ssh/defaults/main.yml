@@ -1,0 +1,43 @@
+---
+ssh_port: 22
+# Empty = listen on all addresses.
+ssh_listen_addresses: []
+
+ssh_permit_root_login: "no"
+ssh_password_authentication: false
+ssh_kbd_interactive_authentication: false
+
+# Only members of these groups may log in. The users role puts every
+# administrator in users_ssh_group, so default accounts such as "ubuntu"
+# are refused even if they still have keys.
+ssh_allow_groups:
+  - "{{ users_ssh_group | default('sshusers') }}"
+
+ssh_max_auth_tries: 3
+ssh_max_sessions: 10
+ssh_login_grace_time: 30
+# Drop dead clients after ~10 minutes without a response.
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+
+ssh_x11_forwarding: false
+ssh_allow_agent_forwarding: false
+# "local" permits `ssh -L` tunnels (used to reach Grafana on 127.0.0.1) but
+# not remote forwards that would publish ports on this server.
+ssh_allow_tcp_forwarding: local
+
+# VERBOSE logs the fingerprint of the key used for each login.
+ssh_log_level: VERBOSE
+
+# Ubuntu 24.04 starts sshd through ssh.socket, which ignores Port and
+# ListenAddress in sshd_config. Running sshd as a normal service keeps
+# sshd_config the single source of truth. See docs/security.md.
+ssh_disable_socket_activation: true
+
+# Seconds before an unconfirmed SSH change is rolled back automatically.
+ssh_rollback_timeout: 300
+
+# Changing the port of an existing server must be requested explicitly.
+ssh_allow_port_change: false
+
+ssh_drop_in_path: /etc/ssh/sshd_config.d/00-bastion.conf

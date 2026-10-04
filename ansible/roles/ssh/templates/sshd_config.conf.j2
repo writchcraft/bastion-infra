@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+#
+# Bastion SSH policy. The 00- prefix makes sshd read this file before other
+# drop-ins; for most keywords the first value read wins, so these settings
+# take priority over later files such as 50-cloud-init.conf.
+#
+# Ciphers, MACs and key exchange are deliberately left at the OpenSSH
+# defaults shipped by Ubuntu, which are current and maintained upstream.
+
+Port {{ ssh_port }}
+{% for address in ssh_listen_addresses %}
+ListenAddress {{ address }}
+{% endfor %}
+
+# Authentication
+PermitRootLogin {{ ssh_permit_root_login }}
+PubkeyAuthentication yes
+PasswordAuthentication {{ 'yes' if ssh_password_authentication | bool else 'no' }}
+KbdInteractiveAuthentication {{ 'yes' if ssh_kbd_interactive_authentication | bool else 'no' }}
+PermitEmptyPasswords no
+{% if not ssh_password_authentication | bool and not ssh_kbd_interactive_authentication | bool %}
+AuthenticationMethods publickey
+{% endif %}
+{% if ssh_allow_groups | length > 0 %}
+AllowGroups {{ ssh_allow_groups | join(' ') }}
+{% endif %}
+
+# Limits
+MaxAuthTries {{ ssh_max_auth_tries }}
+MaxSessions {{ ssh_max_sessions }}
+LoginGraceTime {{ ssh_login_grace_time }}
+ClientAliveInterval {{ ssh_client_alive_interval }}
+ClientAliveCountMax {{ ssh_client_alive_count_max }}
+
+# Forwarding
+X11Forwarding {{ 'yes' if ssh_x11_forwarding | bool else 'no' }}
+AllowAgentForwarding {{ 'yes' if ssh_allow_agent_forwarding | bool else 'no' }}
+AllowTcpForwarding {{ ssh_allow_tcp_forwarding }}
+PermitTunnel no
+
+# Logging
+LogLevel {{ ssh_log_level }}
