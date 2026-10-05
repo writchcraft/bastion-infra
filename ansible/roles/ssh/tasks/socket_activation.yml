@@ -1,0 +1,35 @@
+---
+# Ubuntu 24.04 enables ssh.socket by default. Port and ListenAddress then come
+# from a systemd generator rather than sshd itself, and changing them needs a
+# daemon-reload plus a socket restart. Running sshd as a plain service keeps
+# the behaviour that every other Linux server (and every runbook) expects.
+#
+# Existing sessions survive: ssh.service uses KillMode=process.
+
+- name: Move sshd off socket activation
+  block:
+    - name: Disable the ssh socket unit
+      ansible.builtin.systemd_service:
+        name: ssh.socket
+        enabled: false
+        state: stopped
+
+    - name: Start sshd as a standalone service
+      ansible.builtin.systemd_service:
+        name: ssh.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+  rescue:
+    - name: Restore socket activation
+      ansible.builtin.systemd_service:
+        name: ssh.socket
+        enabled: true
+        state: started
+
+    - name: Report the failed switch
+      ansible.builtin.fail:
+        msg: >-
+          sshd could not be started as a standalone service, so socket activation was restored.
+          Inspect `journalctl -u ssh.service` on the server, or set ssh_disable_socket_activation=false.
