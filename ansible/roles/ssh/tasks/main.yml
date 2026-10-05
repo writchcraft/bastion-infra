@@ -1,0 +1,179 @@
+---
+# SSH changes are applied as one guarded sequence rather than through a handler:
+#
+#   validate the drop-in -> arm a timed rollback -> validate the full config
+#   -> reload sshd -> prove a NEW login works -> disarm the rollback
+#
+# A handler would run at the end of the play, after unrelated roles, and could
+# not prove access was kept. If the new login fails, the rollback restores the
+# previous configuration within ssh_rollback_timeout seconds.
+
+- name: Install the OpenSSH server
+  ansible.builtin.apt:
+    name: openssh-server
+    state: present
+
+- name: Read the main sshd configuration
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config
+  register: ssh_main_config
+
+- name: Check sshd_config loads the drop-in directory
+  ansible.builtin.assert:
+    that:
+      - ssh_main_config.content | b64decode is search('(?m)^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf')
+    fail_msg: >-
+      /etc/ssh/sshd_config does not include /etc/ssh/sshd_config.d/*.conf, so the Bastion drop-in would
+      be ignored. Restore the Ubuntu default Include line before running this role.
+    quiet: true
+
+# --- Lockout guards -----------------------------------------------------------------
+
+- name: Work out which accounts will be able to log in
+  ansible.builtin.set_fact:
+    ssh_login_users: >-
+      {{ admin_users | default([]) | rejectattr('state', 'defined') | map(attribute='name') | list
+         + admin_users | default([]) | selectattr('state', 'defined') | selectattr('state', 'equalto', 'present')
+           | map(attribute='name') | list }}
+    ssh_connection_port: "{{ ansible_port | default(22) }}"
+    ssh_remote: "{{ ansible_connection | default('ssh') not in ['local'] }}"
+
+- name: Check this play will not lock itself out
+  ansible.builtin.assert:
+    that:
+      - not ssh_remote or ssh_allow_groups | length == 0 or bastion_connection_user in ssh_login_users
+      - not ssh_remote or ssh_permit_root_login != 'no' or bastion_connection_user != 'root'
+      - not ssh_remote or ssh_connection_port | int == ssh_port | int or ssh_allow_port_change | bool
+    fail_msg: >-
+      Applying this SSH policy could lock out the current session (connected as
+      {{ bastion_connection_user }} on port {{ ssh_connection_port }}). Connect as an administrator listed in
+      admin_users (run bootstrap.yml first), and set ssh_allow_port_change=true to move SSH to port {{ ssh_port }}.
+    quiet: true
+
+# --- Service mode -------------------------------------------------------------------
+
+# Querying a unit without requesting a state changes nothing.
+- name: Check whether sshd uses socket activation
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+  register: ssh_socket_unit
+
+- name: Switch sshd from socket activation to a standalone service
+  ansible.builtin.include_tasks: socket_activation.yml
+  when:
+    - ssh_disable_socket_activation | bool
+    - ssh_socket_unit.status.UnitFileState | default('') == 'enabled'
+
+- name: Enable the SSH service
+  ansible.builtin.systemd_service:
+    name: ssh
+    enabled: true
+    state: started
+
+# --- Configuration ------------------------------------------------------------------
+
+- name: Install the SSH rollback helper
+  ansible.builtin.copy:
+    src: bastion-sshd-rollback
+    dest: /usr/local/sbin/bastion-sshd-rollback
+    owner: root
+    group: root
+    mode: "0750"
+
+# `sshd -t` refuses to run without its privilege separation directory, which
+# only exists while the service is running.
+- name: Ensure the sshd privilege separation directory exists
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the SSH hardening drop-in
+  ansible.builtin.template:
+    src: sshd_config.conf.j2
+    dest: "{{ ssh_drop_in_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    backup: true
+    validate: /usr/sbin/sshd -t -f %s
+  register: ssh_drop_in
+
+# Deliberately not a handler; see the comment at the top of this file.
+- name: Apply the SSH change with automatic rollback  # noqa: no-handler
+  when: ssh_drop_in is changed
+  vars:
+    ssh_rollback_unit: "bastion-sshd-rollback-{{ ansible_facts['date_time']['epoch'] }}"
+    ssh_previous_drop_in: "{{ ssh_drop_in.backup_file | default('none') }}"
+  block:
+    - name: Arm the automatic rollback
+      ansible.builtin.command:
+        argv:
+          - systemd-run
+          - --collect
+          - "--unit={{ ssh_rollback_unit }}"
+          - "--on-active={{ ssh_rollback_timeout }}"
+          - /usr/local/sbin/bastion-sshd-rollback
+          - "{{ ssh_previous_drop_in }}"
+      changed_when: true
+
+    - name: Validate the complete sshd configuration
+      ansible.builtin.command:
+        cmd: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Reload sshd
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
+
+    # A connection variable, so it cannot carry the role prefix.
+    - name: Use the new SSH port for the rest of this play
+      ansible.builtin.set_fact:
+        ansible_port: "{{ ssh_port }}"  # noqa: var-naming[no-role-prefix]
+      when:
+        - ssh_remote
+        - ssh_connection_port | int != ssh_port | int
+
+    # A brand-new connection from the control machine, bypassing Ansible's
+    # multiplexed session, is the only real proof that access survived.
+    - name: Confirm a new SSH login works
+      ansible.builtin.command:
+        argv: "{{ ['ssh', '-o', 'BatchMode=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
+                   '-o', 'ConnectTimeout=15', '-p', ssh_port | string]
+                  + (['-i', hostvars[inventory_hostname]['ansible_ssh_private_key_file']]
+                     if hostvars[inventory_hostname]['ansible_ssh_private_key_file'] is defined else [])
+                  + [hostvars[inventory_hostname]['ansible_user'] ~ '@'
+                     ~ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname), 'true'] }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      when: ssh_remote
+
+    - name: Disarm the automatic rollback
+      ansible.builtin.systemd_service:
+        name: "{{ ssh_rollback_unit }}.timer"
+        state: stopped
+
+  rescue:
+    - name: Roll back the SSH change now
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/bastion-sshd-rollback
+          - "{{ ssh_previous_drop_in }}"
+      changed_when: true
+
+    - name: Cancel the pending timed rollback
+      ansible.builtin.systemd_service:
+        name: "{{ ssh_rollback_unit }}.timer"
+        state: stopped
+      failed_when: false
+
+    - name: Report the failed SSH change
+      ansible.builtin.fail:
+        msg: >-
+          The new SSH configuration failed validation or a fresh login was refused, so the previous
+          configuration was restored. Failed task: {{ ansible_failed_task.name | default('unknown') }}.
+          See docs/troubleshooting.md#ssh.
