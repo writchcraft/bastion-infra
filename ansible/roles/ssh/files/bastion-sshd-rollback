@@ -1,0 +1,23 @@
+#!/bin/sh
+# Restores the previous Bastion sshd drop-in. Armed by the ssh role with
+# systemd-run before each SSH change, and disarmed once a fresh login has
+# succeeded. If it fires, the change was never confirmed.
+#
+# Usage: bastion-sshd-rollback <backup-file|none>
+set -eu
+
+DROP_IN=/etc/ssh/sshd_config.d/00-bastion.conf
+BACKUP="${1:-none}"
+
+logger -t bastion-sshd-rollback "SSH change not confirmed; restoring previous configuration (backup: $BACKUP)"
+
+if [ "$BACKUP" != "none" ] && [ -f "$BACKUP" ]; then
+    cp -p "$BACKUP" "$DROP_IN"
+else
+    # The drop-in did not exist before this change.
+    rm -f "$DROP_IN"
+fi
+
+/usr/sbin/sshd -t
+systemctl reload ssh || systemctl restart ssh
+logger -t bastion-sshd-rollback "Previous SSH configuration restored"
