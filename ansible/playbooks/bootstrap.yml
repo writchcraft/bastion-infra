@@ -1,0 +1,49 @@
+---
+# Bootstrap: first contact with a fresh server.
+#
+# Connects once as the image's default account (bootstrap_user, e.g. "ubuntu")
+# and creates the administrator accounts used by every later run. It does NOT
+# harden SSH or enable the firewall. Those changes happen in server.yml, and
+# only after the second play below has proven that the new administrator can
+# log in with a key and use sudo.
+#
+#   ansible-playbook playbooks/bootstrap.yml
+#   ansible-playbook playbooks/bootstrap.yml -k -K   # image uses passwords
+
+- name: Bootstrap administrator access
+  hosts: bastion_servers
+  become: true
+  gather_facts: true
+  vars:
+    ansible_user: "{{ bootstrap_user }}"
+    ansible_connection: "{{ bootstrap_connection | default('ssh') }}"
+  pre_tasks:
+    - name: Run preflight checks
+      ansible.builtin.import_tasks: tasks/preflight.yml
+  roles:
+    - role: users
+
+- name: Confirm access as the administrator
+  hosts: bastion_servers
+  gather_facts: false
+  vars:
+    ansible_user: "{{ bastion_admin_user }}"
+  tasks:
+    - name: Open a new SSH session as the administrator
+      ansible.builtin.ping:
+
+    - name: Check the administrator can escalate to root
+      ansible.builtin.command:
+        cmd: id -u
+      become: true
+      changed_when: false
+      register: bootstrap_root_check
+
+    - name: Confirm replacement access is working
+      ansible.builtin.assert:
+        that:
+          - bootstrap_root_check.stdout == '0'
+        success_msg: >-
+          {{ bastion_admin_user }} can log in with an SSH key and use sudo.
+          Next: ansible-playbook playbooks/server.yml
+        fail_msg: "{{ bastion_admin_user }} logged in but sudo did not return root."

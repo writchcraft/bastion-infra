@@ -1,0 +1,13 @@
+---
+# Project constants shared by all playbooks.
+#
+# Playbook-adjacent group_vars take precedence over inventory group_vars/all,
+# so only values that must NOT vary per environment belong here. Everything
+# configurable lives in role defaults and the inventories.
+bastion_supported_ubuntu_versions:
+  - "24.04"
+
+# admin_users entries that should exist (state omitted or "present").
+bastion_present_admin_users: >-
+  {{ admin_users | default([]) | rejectattr('state', 'defined') | list
+     + admin_users | default([]) | selectattr('state', 'defined') | selectattr('state', 'equalto', 'present') | list }}
