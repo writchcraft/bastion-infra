@@ -1,0 +1,73 @@
+---
+# community.general.ufw applies every change to the live firewall immediately,
+# so this role needs no reload handler. Rules are added before the firewall
+# is enabled so SSH is never blocked, even on the very first run.
+
+- name: Install UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Set the default incoming policy
+  community.general.ufw:
+    direction: incoming
+    default: "{{ firewall_default_incoming }}"
+
+- name: Set the default outgoing policy
+  community.general.ufw:
+    direction: outgoing
+    default: "{{ firewall_default_outgoing }}"
+
+- name: Allow SSH
+  community.general.ufw:
+    rule: "{{ 'limit' if firewall_ssh_rate_limit else 'allow' }}"
+    port: "{{ firewall_ssh_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "bastion: ssh"
+  loop: "{{ firewall_ssh_allowed_sources }}"
+
+# When ssh_port is being changed, the port this play is connected through must
+# stay open until the inventory points at the new port.
+- name: Keep the current SSH connection port open during a port change
+  community.general.ufw:
+    rule: "{{ 'limit' if firewall_ssh_rate_limit else 'allow' }}"
+    port: "{{ ansible_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "bastion: ssh (previous port)"
+  loop: "{{ firewall_ssh_allowed_sources }}"
+  when:
+    - ansible_connection | default('ssh') not in ['local']
+    - ansible_port is defined
+    - ansible_port | int != firewall_ssh_port | int
+
+- name: Allow additional inbound rules
+  community.general.ufw:
+    rule: "{{ item.rule | default('allow') }}"
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    from_ip: "{{ item.from | default('any') }}"
+    comment: "bastion: {{ item.comment | default('custom rule') }}"
+  loop: "{{ firewall_rules }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }} from {{ item.from | default('any') }}"
+
+- name: Delete rules that are no longer wanted
+  community.general.ufw:
+    rule: "{{ item.rule | default('allow') }}"
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    from_ip: "{{ item.from | default('any') }}"
+    delete: true
+  loop: "{{ firewall_removed_rules }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }} from {{ item.from | default('any') }}"
+
+- name: Set firewall logging
+  community.general.ufw:
+    logging: "{{ firewall_logging }}"
+
+- name: Enable the firewall
+  community.general.ufw:
+    state: enabled

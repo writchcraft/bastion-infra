@@ -1,0 +1,25 @@
+---
+firewall_default_incoming: deny
+firewall_default_outgoing: allow
+firewall_logging: low
+
+firewall_ssh_port: "{{ ssh_port | default(22) }}"
+
+# Sources allowed to reach SSH. "any" or a list of CIDRs, e.g. a VPN range.
+firewall_ssh_allowed_sources:
+  - any
+
+# "limit" makes UFW reject an address that opens 6+ connections in 30 seconds.
+# Ansible reuses one multiplexed connection, so normal runs are unaffected.
+firewall_ssh_rate_limit: true
+
+# Additional inbound rules, beyond those the service roles open themselves:
+#   - port: 443
+#     proto: tcp            # tcp | udp | any (default tcp)
+#     from: 203.0.113.0/24  # default any
+#     comment: public HTTPS
+firewall_rules: []
+
+# Rules to delete, in the same format. UFW keeps rules until told otherwise,
+# so a rule removed from firewall_rules must be listed here once.
+firewall_removed_rules: []
