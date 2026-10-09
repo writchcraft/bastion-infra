@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+#
+# Bans addresses that repeatedly fail SSH authentication. Read from the
+# systemd journal, so it works whether or not rsyslog writes auth.log.
+[DEFAULT]
+bantime  = {{ security_fail2ban_bantime }}
+findtime = {{ security_fail2ban_findtime }}
+maxretry = {{ security_fail2ban_maxretry }}
+ignoreip = {{ security_fail2ban_ignoreip | join(' ') }}
+
+[sshd]
+enabled = true
+port    = {{ security_fail2ban_ssh_port }}
+backend = systemd
