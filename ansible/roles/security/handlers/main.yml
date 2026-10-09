@@ -1,0 +1,12 @@
+---
+# Handlers run in the order they are defined here, so the configuration is
+# tested before the running service is restarted with it.
+- name: Validate fail2ban configuration
+  ansible.builtin.command:
+    cmd: fail2ban-client --test
+  changed_when: false
+
+- name: Restart fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted

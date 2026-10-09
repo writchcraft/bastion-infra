@@ -1,0 +1,36 @@
+---
+# --- Automatic security updates ------------------------------------------------------
+# Ubuntu's stock policy (50unattended-upgrades) installs packages from the
+# -security pocket only. Third-party repositories such as Docker and PGDG are
+# deliberately not auto-upgraded, so the daemon and database only change when
+# Ansible runs.
+security_unattended_upgrades: true
+security_auto_reboot: false
+security_auto_reboot_time: "03:30"
+
+# --- fail2ban -------------------------------------------------------------------------
+security_fail2ban: true
+security_fail2ban_bantime: 1h
+security_fail2ban_findtime: 10m
+security_fail2ban_maxretry: 5
+security_fail2ban_ignoreip: "{{ ['127.0.0.1/8', '::1'] + fail2ban_ignore_networks | default([]) }}"
+security_fail2ban_ssh_port: "{{ ssh_port | default(22) }}"
+
+# --- Kernel network parameters ---------------------------------------------------------
+# Only settings that differ from Ubuntu's defaults and do not break Docker
+# (which needs IP forwarding). Each one is explained in docs/security.md.
+security_sysctl:
+  net.ipv4.conf.all.accept_redirects: 0
+  net.ipv4.conf.default.accept_redirects: 0
+  net.ipv6.conf.all.accept_redirects: 0
+  net.ipv6.conf.default.accept_redirects: 0
+  net.ipv4.conf.all.send_redirects: 0
+  net.ipv4.conf.default.send_redirects: 0
+  net.ipv4.conf.all.log_martians: 1
+  net.ipv4.conf.default.log_martians: 1
+security_sysctl_file: /etc/sysctl.d/60-bastion.conf
+
+# --- Unneeded services ----------------------------------------------------------------
+# Services to stop, disable and mask, if installed. Empty by default: what is
+# "unnecessary" depends on the server's purpose. Example: [snapd, ModemManager]
+security_disabled_services: []

@@ -1,0 +1,91 @@
+---
+# --- Automatic security updates ------------------------------------------------------
+
+- name: Configure unattended security upgrades
+  when: security_unattended_upgrades | bool
+  block:
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Enable the periodic apt jobs
+      ansible.builtin.template:
+        src: 20auto-upgrades.j2
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+        validate: apt-config -c %s dump
+
+    - name: Set the unattended-upgrades policy
+      ansible.builtin.template:
+        src: 52bastion-unattended-upgrades.j2
+        dest: /etc/apt/apt.conf.d/52bastion-unattended-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+        validate: apt-config -c %s dump
+
+    - name: Enable the apt upgrade timer
+      ansible.builtin.systemd_service:
+        name: apt-daily-upgrade.timer
+        enabled: true
+        state: started
+
+# --- fail2ban -------------------------------------------------------------------------
+
+- name: Configure fail2ban
+  when: security_fail2ban | bool
+  block:
+    - name: Install fail2ban
+      ansible.builtin.apt:
+        name:
+          - fail2ban
+          - python3-systemd  # journal backend
+        state: present
+
+    - name: Configure the SSH jail
+      ansible.builtin.template:
+        src: jail.local.j2
+        dest: /etc/fail2ban/jail.d/bastion.local
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Validate fail2ban configuration
+        - Restart fail2ban
+
+    - name: Enable fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        enabled: true
+        state: started
+
+# --- Kernel network parameters ---------------------------------------------------------
+
+- name: Apply kernel network hardening
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value | string }}"
+    sysctl_file: "{{ security_sysctl_file }}"
+    sysctl_set: true
+    state: present
+  loop: "{{ security_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+
+# --- Unneeded services ----------------------------------------------------------------
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+  when: security_disabled_services | length > 0
+
+- name: Disable unneeded services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+    masked: true
+  loop: "{{ security_disabled_services }}"
+  when: (item ~ '.service') in ansible_facts.services
