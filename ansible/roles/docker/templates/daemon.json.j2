@@ -1,0 +1,8 @@
+{{ {
+     'log-driver': 'json-file',
+     'log-opts': {
+       'max-size': docker_log_max_size | string,
+       'max-file': docker_log_max_file | string,
+     },
+     'live-restore': docker_live_restore | bool,
+   } | combine(docker_daemon_options, recursive=true) | to_nice_json(indent=2) }}

@@ -1,0 +1,42 @@
+---
+docker_apt_url: https://download.docker.com/linux/ubuntu
+docker_apt_key_url: https://download.docker.com/linux/ubuntu/gpg
+docker_apt_key_path: /etc/apt/keyrings/docker.asc
+docker_apt_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Ubuntu's own container packages conflict with Docker's and are removed
+# first, as Docker's installation guide instructs. Containers and images in
+# /var/lib/docker are not touched by removing these packages.
+docker_remove_conflicting_packages: true
+docker_conflicting_packages:
+  - docker.io
+  - docker-doc
+  - docker-compose
+  - docker-compose-v2
+  - podman-docker
+  - containerd
+  - runc
+
+# Members of the docker group can start privileged containers, which is
+# equivalent to root. Grant it deliberately.
+docker_users: []
+
+# Rotate container logs so a chatty container cannot fill the disk, and keep
+# containers running while the daemon restarts after a config change.
+docker_log_max_size: 10m
+docker_log_max_file: 3
+docker_live_restore: true
+# Extra daemon.json keys, merged over the settings above.
+docker_daemon_options: {}
+
+# Base directories for Bastion-managed stacks: configuration under
+# docker_stacks_dir, persistent data under docker_data_dir.
+docker_stacks_dir: /opt/bastion
+docker_data_dir: /var/lib/bastion
