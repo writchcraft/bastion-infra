@@ -1,0 +1,156 @@
+---
+# Docker's API is only ever reachable through the local Unix socket
+# (root:docker 0660). Exposing it over TCP gives anyone who can connect full
+# root access, so it is refused here rather than merely documented.
+- name: Refuse to expose the Docker API over the network
+  ansible.builtin.assert:
+    that:
+      - "'hosts' not in docker_daemon_options"
+    fail_msg: >-
+      docker_daemon_options.hosts is not supported. Publishing the Docker API on a TCP socket gives root
+      access to anyone who can reach it. Use SSH (`docker -H ssh://user@host`) for remote access.
+    quiet: true
+
+- name: Check the requested Docker users exist
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+  loop: "{{ docker_users }}"
+
+# --- Repository ----------------------------------------------------------------------
+
+- name: Remove conflicting container packages
+  ansible.builtin.apt:
+    name: "{{ docker_conflicting_packages }}"
+    state: absent
+  when: docker_remove_conflicting_packages | bool
+
+- name: Create the apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Docker repository signing key
+  ansible.builtin.get_url:
+    url: "{{ docker_apt_key_url }}"
+    dest: "{{ docker_apt_key_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# A docker.list written by Docker's manual install instructions points at
+# the same repository with a different Signed-By path, which apt rejects as
+# a conflict. It is backed up and replaced by the deb822 source below.
+- name: Check for a legacy Docker apt source
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/docker.list
+  register: docker_legacy_source
+
+- name: Retire the legacy Docker apt source
+  when: docker_legacy_source.stat.exists
+  block:
+    - name: Back up the legacy Docker apt source
+      ansible.builtin.copy:
+        src: /etc/apt/sources.list.d/docker.list
+        dest: /var/backups/docker.list.bastion-backup
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Remove the legacy Docker apt source
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/docker.list
+        state: absent
+
+- name: Add the Docker apt repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: "{{ docker_apt_url }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ docker_apt_arch }}"
+    signed_by: "{{ docker_apt_key_path }}"
+    mode: "0644"
+    state: present
+  register: docker_repository
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: "{{ docker_repository is changed or docker_legacy_source.stat.exists }}"
+
+# --- Daemon ----------------------------------------------------------------------------
+
+- name: Create the Docker configuration directory
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure the Docker daemon
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    validate: dockerd --validate --config-file=%s
+  notify: Restart Docker
+
+- name: Enable Docker and containerd
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - containerd
+    - docker
+
+- name: Grant Docker access to the configured users
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+
+- name: Create Bastion stack and data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ docker_stacks_dir }}"
+    - "{{ docker_data_dir }}"
+
+# Later roles deploy containers, so a pending daemon restart must happen now.
+- name: Apply pending Docker daemon changes
+  ansible.builtin.meta: flush_handlers
+
+# --- Health ----------------------------------------------------------------------------
+
+- name: Query the Docker daemon
+  ansible.builtin.command:
+    cmd: docker version --format '{{ "{{" }} .Server.Version {{ "}}" }}'
+  register: docker_server_version
+  changed_when: false
+
+- name: Query the Compose plugin
+  ansible.builtin.command:
+    cmd: docker compose version --short
+  register: docker_compose_version
+  changed_when: false
+
+- name: Report Docker versions
+  ansible.builtin.debug:
+    msg: "Docker Engine {{ docker_server_version.stdout }}, Compose {{ docker_compose_version.stdout }}"
