@@ -1,0 +1,31 @@
+---
+# Debian's postgresql.conf ends with `include_dir = 'conf.d'`, so settings are
+# added as a drop-in and the packaged file is left untouched.
+- name: Configure PostgreSQL server settings
+  ansible.builtin.template:
+    src: bastion.conf.j2
+    dest: "{{ postgres_config_dir }}/conf.d/90-bastion.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: PostgreSQL settings changed
+
+- name: Configure client authentication
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgres_config_dir }}/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    backup: true
+  notify: PostgreSQL client authentication changed
+
+- name: Enable the PostgreSQL cluster
+  ansible.builtin.systemd_service:
+    name: "{{ postgres_service }}"
+    enabled: true
+    state: started
+
+# Roles and databases are created against the final configuration.
+- name: Apply pending PostgreSQL configuration changes
+  ansible.builtin.meta: flush_handlers

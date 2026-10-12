@@ -1,0 +1,59 @@
+---
+# Handlers run in definition order. Each change is validated against the
+# running server first, then applied with the least disruptive action: a
+# reload, followed by a restart only if PostgreSQL reports one is needed
+# (for example after changing listen_addresses).
+
+- name: Validate PostgreSQL settings
+  community.postgresql.postgresql_query:
+    # pg_file_settings re-reads the configuration files when queried.
+    query: >-
+      SELECT sourcefile, sourceline, name, error FROM pg_file_settings
+      WHERE error IS NOT NULL AND error <> 'setting could not be applied'
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+  become: true
+  become_user: postgres
+  register: postgres_settings_errors
+  failed_when: postgres_settings_errors.rowcount > 0
+  changed_when: false
+  listen: PostgreSQL settings changed
+
+- name: Validate PostgreSQL client authentication
+  community.postgresql.postgresql_query:
+    # pg_hba_file_rules re-reads pg_hba.conf when queried.
+    query: SELECT line_number, error FROM pg_hba_file_rules WHERE error IS NOT NULL
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+  become: true
+  become_user: postgres
+  register: postgres_hba_errors
+  failed_when: postgres_hba_errors.rowcount > 0
+  changed_when: false
+  listen: PostgreSQL client authentication changed
+
+- name: Reload PostgreSQL
+  ansible.builtin.systemd_service:
+    name: "{{ postgres_service }}"
+    state: reloaded
+  listen:
+    - PostgreSQL settings changed
+    - PostgreSQL client authentication changed
+
+- name: Check whether PostgreSQL needs a restart
+  community.postgresql.postgresql_query:
+    query: SELECT name FROM pg_settings WHERE pending_restart
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+  become: true
+  become_user: postgres
+  register: postgres_pending_restart
+  changed_when: false
+  listen: PostgreSQL settings changed
+
+- name: Restart PostgreSQL
+  ansible.builtin.systemd_service:
+    name: "{{ postgres_service }}"
+    state: restarted
+  when: postgres_pending_restart.rowcount | default(0) > 0
+  listen: PostgreSQL settings changed

@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+#
+# Loaded after postgresql.conf through `include_dir = 'conf.d'`.
+# The port is left in postgresql.conf, where Debian's cluster tools read it.
+
+# Listen on the network only when remote clients are configured.
+listen_addresses = '{{ '*' if postgres_allowed_networks | length > 0 else 'localhost' }}'
+password_encryption = scram-sha-256
+
+log_connections = {{ 'on' if postgres_log_connections | bool else 'off' }}
+log_disconnections = {{ 'on' if postgres_log_connections | bool else 'off' }}
+{% for name, value in postgres_settings | dictsort %}
+{{ name }} = '{{ value }}'
+{% endfor %}

@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+#
+# The first matching line wins. Local socket logins use peer authentication
+# (the OS user must match the database role); every TCP login needs a SCRAM
+# password, and remote logins must also use TLS.
+#
+# TYPE   DATABASE     USER      ADDRESS          METHOD
+local    all          postgres                   peer
+local    all          all                        peer
+host     all          all       127.0.0.1/32     scram-sha-256
+host     all          all       ::1/128          scram-sha-256
+local    replication  all                        peer
+host     replication  all       127.0.0.1/32     scram-sha-256
+host     replication  all       ::1/128          scram-sha-256
+{% if postgres_allowed_networks | length > 0 %}
+
+# Remote clients: each database only by its owner, only from listed networks.
+{% for network in postgres_allowed_networks %}
+{% for database in postgres_databases %}
+hostssl  {{ database.name }}  {{ database.owner }}  {{ network }}  scram-sha-256
+{% endfor %}
+{% endfor %}
+{% endif %}
