@@ -1,0 +1,43 @@
+---
+# PostgreSQL runs natively from the PostgreSQL Global Development Group (PGDG)
+# apt repository. See docs/architecture.md for why it is not containerised.
+postgres_version: 16
+postgres_cluster: main
+postgres_port: 5432
+
+postgres_apt_url: https://apt.postgresql.org/pub/repos/apt
+postgres_apt_key_url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+postgres_apt_key_path: /etc/apt/keyrings/postgresql.asc
+
+postgres_config_dir: "/etc/postgresql/{{ postgres_version }}/{{ postgres_cluster }}"
+postgres_data_dir: "/var/lib/postgresql/{{ postgres_version }}/{{ postgres_cluster }}"
+postgres_service: "postgresql@{{ postgres_version }}-{{ postgres_cluster }}"
+
+# Login roles. Passwords must come from the vault.
+#   - name: app
+#     password: "{{ vault_postgres_app_password }}"
+#     role_attr_flags: ""   # e.g. "CREATEDB"
+postgres_users: []
+
+# Databases, each owned by one of postgres_users.
+#   - name: app
+#     owner: app
+#     encoding: UTF8
+#     lc_collate: C.UTF-8
+#     lc_ctype: C.UTF-8
+postgres_databases: []
+
+# Client networks allowed to connect over TCP (TLS + SCRAM required).
+# Empty = PostgreSQL listens on localhost only and no firewall port is opened.
+postgres_allowed_networks: []
+
+# Extra postgresql.conf settings, e.g. {shared_buffers: 512MB, max_connections: 200}
+postgres_settings: {}
+postgres_log_connections: false
+
+# --- Backups --------------------------------------------------------------------------
+postgres_backup_enabled: true
+postgres_backup_dir: /var/backups/postgresql
+# systemd OnCalendar expression
+postgres_backup_schedule: "*-*-* 02:30:00"
+postgres_backup_retention_days: 7
