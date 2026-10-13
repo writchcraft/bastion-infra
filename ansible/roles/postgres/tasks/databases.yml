@@ -1,0 +1,49 @@
+---
+- name: Create PostgreSQL login roles
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role_attr_flags: "{{ item.role_attr_flags | default(omit) }}"
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+    state: present
+  loop: "{{ postgres_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  become_user: postgres
+  no_log: true
+
+- name: Create PostgreSQL databases
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.owner }}"
+    encoding: "{{ item.encoding | default('UTF8') }}"
+    lc_collate: "{{ item.lc_collate | default(omit) }}"
+    lc_ctype: "{{ item.lc_ctype | default(omit) }}"
+    template: template0
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+    state: present
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  become_user: postgres
+
+# By default every role may CONNECT to every database. Revoking that from
+# PUBLIC leaves each database reachable only by its owner and superusers.
+- name: Restrict database connections to their owners
+  community.postgresql.postgresql_privs:
+    database: "{{ item.name }}"
+    type: database
+    privs: CONNECT
+    roles: PUBLIC
+    state: absent
+    login_unix_socket: /var/run/postgresql
+    port: "{{ postgres_port }}"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  become_user: postgres

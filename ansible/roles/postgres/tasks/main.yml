@@ -1,0 +1,39 @@
+---
+- name: Validate PostgreSQL users and databases
+  ansible.builtin.assert:
+    that:
+      - postgres_users | selectattr('name', 'undefined') | list | length == 0
+      - postgres_users | selectattr('password', 'undefined') | list | length == 0
+      - postgres_users | map(attribute='password') | select('in', ['', 'CHANGE_ME']) | list | length == 0
+      - postgres_databases | map(attribute='owner') | difference(postgres_users | map(attribute='name')) | length == 0
+    fail_msg: >-
+      Every PostgreSQL user needs a name and a real password from the vault (not CHANGE_ME), and every
+      database owner must be one of postgres_users. Run scripts/init-vault.sh if vault.yml does not exist.
+    quiet: true
+
+- name: Install PostgreSQL
+  ansible.builtin.import_tasks: install.yml
+
+- name: Configure PostgreSQL
+  ansible.builtin.import_tasks: configure.yml
+
+- name: Create roles and databases
+  ansible.builtin.import_tasks: databases.yml
+
+- name: Configure backups
+  ansible.builtin.import_tasks: backup.yml
+  when: postgres_backup_enabled | bool
+
+- name: Allow PostgreSQL clients through the firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ postgres_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "bastion: postgresql"
+  loop: "{{ postgres_allowed_networks }}"
+
+- name: Check PostgreSQL accepts connections
+  ansible.builtin.command:
+    cmd: pg_isready --host=/var/run/postgresql --port={{ postgres_port }}
+  changed_when: false
