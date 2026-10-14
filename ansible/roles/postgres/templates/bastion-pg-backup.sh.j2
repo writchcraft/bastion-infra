@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Logical backup of every Bastion-managed database, plus cluster-wide roles.
+# Runs as the postgres user from bastion-pg-backup.service. Each file is
+# written as *.partial and renamed only once complete, so an interrupted run
+# never looks like a valid backup. Restore steps: docs/troubleshooting.md.
+set -euo pipefail
+
+BACKUP_DIR={{ postgres_backup_dir | quote }}
+RETENTION_DAYS={{ postgres_backup_retention_days | int }}
+PORT={{ postgres_port | int }}
+DATABASES=({% for database in postgres_databases %}{{ database.name | quote }}{{ ' ' if not loop.last else '' }}{% endfor %})
+
+STAMP="$(date +%Y%m%dT%H%M%S)"
+umask 077
+
+pg_dumpall --port="$PORT" --globals-only --file="$BACKUP_DIR/globals_${STAMP}.sql.partial"
+mv "$BACKUP_DIR/globals_${STAMP}.sql.partial" "$BACKUP_DIR/globals_${STAMP}.sql"
+
+for db in "${DATABASES[@]}"; do
+    pg_dump --port="$PORT" --format=custom --file="$BACKUP_DIR/${db}_${STAMP}.dump.partial" "$db"
+    mv "$BACKUP_DIR/${db}_${STAMP}.dump.partial" "$BACKUP_DIR/${db}_${STAMP}.dump"
+    echo "Backed up database ${db}"
+done
+
+# Retention: only files this script names are ever deleted.
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name '*.dump' -o -name 'globals_*.sql' \) \
+    -mtime +"$RETENTION_DAYS" -print -delete
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.partial' -mtime +1 -print -delete
+
+echo "Backup ${STAMP} complete"

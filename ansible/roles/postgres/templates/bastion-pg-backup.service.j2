@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Bastion PostgreSQL logical backup
+Requires={{ postgres_service }}.service
+After={{ postgres_service }}.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/usr/local/sbin/bastion-pg-backup
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Schedule for the Bastion PostgreSQL backup
+
+[Timer]
+OnCalendar={{ postgres_backup_schedule }}
+# Run a missed backup at the next boot.
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
