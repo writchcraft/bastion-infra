@@ -1,0 +1,24 @@
+---
+# Recommended packages add smartmontools and extra collector timers; they are
+# left out to keep the host footprint small.
+- name: Install the Prometheus node exporter
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    install_recommends: false
+
+- name: Bind node_exporter to loopback
+  ansible.builtin.lineinfile:
+    path: /etc/default/prometheus-node-exporter
+    regexp: "^ARGS="
+    line: 'ARGS="--web.listen-address={{ monitoring_node_exporter_listen }}"'
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart node_exporter
+
+- name: Enable node_exporter
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
