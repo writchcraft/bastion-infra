@@ -1,0 +1,13 @@
+---
+# Derived values; not meant to be overridden.
+
+# Address local health checks and Prometheus use to reach Grafana.
+monitoring_grafana_local_address: >-
+  {{ '127.0.0.1' if monitoring_grafana_listen_address in ['0.0.0.0', '127.0.0.1']
+     else monitoring_grafana_listen_address }}
+monitoring_grafana_local_url: "http://{{ monitoring_grafana_local_address }}:{{ monitoring_grafana_port }}"
+monitoring_prometheus_url: "http://{{ monitoring_prometheus_listen }}"
+
+# UIDs the official images run as.
+monitoring_prometheus_uid: "65534"
+monitoring_grafana_uid: "472"

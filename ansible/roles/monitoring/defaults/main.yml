@@ -1,0 +1,31 @@
+---
+# Prometheus and Grafana run under Docker Compose with host networking. Docker
+# publishes ports through its own iptables rules, which bypass UFW; host
+# networking avoids that, so UFW stays the single authority on exposure.
+# node_exporter runs natively because it reads host metrics.
+
+monitoring_stack_dir: "{{ docker_stacks_dir | default('/opt/bastion') }}/monitoring"
+monitoring_data_dir: "{{ docker_data_dir | default('/var/lib/bastion') }}/monitoring"
+
+monitoring_prometheus_image: prom/prometheus:v3.1.0
+monitoring_grafana_image: grafana/grafana:11.4.0
+
+monitoring_scrape_interval: 15s
+monitoring_prometheus_retention: 15d
+monitoring_prometheus_listen: 127.0.0.1:9090
+monitoring_node_exporter_listen: 127.0.0.1:9100
+
+# Grafana listens on loopback by default; reach it with an SSH tunnel:
+#   ssh -L 3000:127.0.0.1:3000 <admin>@<server>
+# To expose it, set the listen address to 0.0.0.0 and list allowed sources,
+# which are opened in UFW.
+monitoring_grafana_listen_address: 127.0.0.1
+monitoring_grafana_port: 3000
+monitoring_grafana_allowed_sources: []
+
+monitoring_grafana_admin_user: admin
+# Must be supplied from the vault.
+monitoring_grafana_admin_password: ""
+
+# Public name when Grafana sits behind a reverse proxy, e.g. grafana.example.com.
+monitoring_domain: ""

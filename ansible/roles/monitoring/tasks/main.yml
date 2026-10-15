@@ -1,0 +1,30 @@
+---
+- name: Check monitoring prerequisites
+  ansible.builtin.assert:
+    that:
+      - monitoring_grafana_admin_password | length >= 12
+      - monitoring_grafana_admin_password != 'CHANGE_ME'
+      - monitoring_grafana_listen_address == '127.0.0.1' or monitoring_grafana_allowed_sources | length > 0
+    fail_msg: >-
+      Set monitoring_grafana_admin_password from the vault (at least 12 characters; run scripts/init-vault.sh).
+      If Grafana listens beyond 127.0.0.1, monitoring_grafana_allowed_sources must say who may reach it.
+    quiet: true
+
+- name: Install node_exporter
+  ansible.builtin.import_tasks: node_exporter.yml
+
+- name: Deploy the Prometheus and Grafana stack
+  ansible.builtin.import_tasks: stack.yml
+
+- name: Reconcile the Grafana admin password
+  ansible.builtin.import_tasks: grafana_admin.yml
+
+- name: Allow Grafana through the firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ monitoring_grafana_port | string }}"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "bastion: grafana"
+  loop: "{{ monitoring_grafana_allowed_sources }}"
+  when: monitoring_grafana_listen_address != '127.0.0.1'
