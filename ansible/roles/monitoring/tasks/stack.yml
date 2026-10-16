@@ -1,0 +1,127 @@
+---
+- name: Create monitoring configuration directories
+  ansible.builtin.file:
+    path: "{{ monitoring_stack_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - ""
+    - prometheus
+    - prometheus/rules
+    - grafana/provisioning/datasources
+    - grafana/provisioning/dashboards
+    - grafana/dashboards
+
+- name: Create persistent data directories
+  ansible.builtin.file:
+    path: "{{ monitoring_data_dir }}/{{ item.name }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "0750"
+  loop:
+    - { name: "", owner: root, group: root }
+    - { name: prometheus, owner: "{{ monitoring_prometheus_uid }}", group: "{{ monitoring_prometheus_uid }}" }
+    - { name: grafana, owner: "{{ monitoring_grafana_uid }}", group: "0" }
+  loop_control:
+    label: "{{ monitoring_data_dir }}/{{ item.name }}"
+
+- name: Write the Compose project
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ monitoring_stack_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write Grafana credentials
+  ansible.builtin.template:
+    src: grafana.env.j2
+    dest: "{{ monitoring_stack_dir }}/grafana.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+# Images are needed before the Prometheus configuration can be validated
+# with the promtool binary they contain.
+- name: Pull missing images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ monitoring_stack_dir }}"
+    policy: missing
+
+- name: Configure Prometheus
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ monitoring_stack_dir }}/prometheus/prometheus.yml"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: >-
+      docker run --rm --network none --user 0 --entrypoint /bin/promtool
+      -v %s:/tmp/prometheus.yml:ro {{ monitoring_prometheus_image }}
+      check config --syntax-only /tmp/prometheus.yml
+  notify: Restart Prometheus
+
+- name: Install Prometheus alert rules
+  ansible.builtin.copy:
+    src: host-alerts.yml
+    dest: "{{ monitoring_stack_dir }}/prometheus/rules/host-alerts.yml"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: >-
+      docker run --rm --network none --user 0 --entrypoint /bin/promtool
+      -v %s:/tmp/rules.yml:ro {{ monitoring_prometheus_image }}
+      check rules /tmp/rules.yml
+  notify: Restart Prometheus
+
+- name: Provision the Grafana data source and dashboard provider
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ monitoring_stack_dir }}/grafana/provisioning/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: grafana-datasource.yml.j2, dest: datasources/prometheus.yml }
+    - { src: grafana-dashboards.yml.j2, dest: dashboards/bastion.yml }
+  notify: Restart Grafana
+
+# Grafana re-reads dashboard files on its own; no restart is needed.
+- name: Install Grafana dashboards
+  ansible.builtin.copy:
+    src: dashboards/
+    dest: "{{ monitoring_stack_dir }}/grafana/dashboards/"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start the monitoring stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_stack_dir }}"
+    state: present
+    pull: missing
+    remove_orphans: true
+
+- name: Apply pending monitoring restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Prometheus to become ready
+  ansible.builtin.uri:
+    url: "{{ monitoring_prometheus_url }}/-/ready"
+  register: monitoring_prometheus_ready
+  until: monitoring_prometheus_ready.status == 200
+  retries: 30
+  delay: 2
+
+- name: Wait for Grafana to become healthy
+  ansible.builtin.uri:
+    url: "{{ monitoring_grafana_local_url }}/api/health"
+  register: monitoring_grafana_ready
+  until: monitoring_grafana_ready.status == 200
+  retries: 30
+  delay: 2

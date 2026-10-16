@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+global:
+  scrape_interval: {{ monitoring_scrape_interval }}
+  evaluation_interval: {{ monitoring_scrape_interval }}
+  external_labels:
+    host: {{ inventory_hostname }}
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["{{ monitoring_prometheus_listen }}"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["{{ monitoring_node_exporter_listen }}"]
+        labels:
+          instance: {{ inventory_hostname }}
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["{{ monitoring_grafana_local_address }}:{{ monitoring_grafana_port }}"]

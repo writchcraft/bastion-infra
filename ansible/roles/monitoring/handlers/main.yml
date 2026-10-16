@@ -1,0 +1,19 @@
+---
+- name: Restart node_exporter
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter
+    state: restarted
+
+- name: Restart Prometheus
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_stack_dir }}"
+    services:
+      - prometheus
+    state: restarted
+
+- name: Restart Grafana
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_stack_dir }}"
+    services:
+      - grafana
+    state: restarted
