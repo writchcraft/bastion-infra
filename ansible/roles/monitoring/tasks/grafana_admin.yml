@@ -1,0 +1,22 @@
+---
+# Grafana only reads GF_SECURITY_ADMIN_PASSWORD when its database is first
+# created. To make the vault the source of truth, test the current password
+# and reset it only when it no longer matches.
+- name: Test the Grafana admin credentials
+  ansible.builtin.uri:
+    url: "{{ monitoring_grafana_local_url }}/api/user"
+    user: "{{ monitoring_grafana_admin_user }}"
+    password: "{{ monitoring_grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: [200, 401]
+  register: monitoring_grafana_login
+  no_log: true
+
+# The password goes through stdin so it never appears in the process list.
+- name: Reset the Grafana admin password to the vault value
+  ansible.builtin.command:
+    argv: [docker, exec, -i, grafana, grafana, cli, admin, reset-admin-password, --password-from-stdin]
+    stdin: "{{ monitoring_grafana_admin_password }}"
+  when: monitoring_grafana_login.status == 401
+  changed_when: true
+  no_log: true

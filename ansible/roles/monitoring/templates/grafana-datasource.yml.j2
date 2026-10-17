@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: {{ monitoring_prometheus_url }}
+    isDefault: true
+    editable: false

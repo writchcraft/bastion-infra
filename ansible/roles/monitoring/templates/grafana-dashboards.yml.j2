@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+apiVersion: 1
+
+providers:
+  - name: bastion
+    folder: Bastion
+    type: file
+    # Dashboards are code: edits in the UI are refused and files win.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
