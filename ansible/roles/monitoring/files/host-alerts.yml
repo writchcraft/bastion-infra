@@ -1,0 +1,48 @@
+---
+# Host alert rules. Without Alertmanager they are visible on Prometheus's
+# Alerts page and in Grafana; routing them to email or chat is future work.
+groups:
+  - name: bastion-host
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"
+
+      - alert: HostDiskSpaceLow
+        expr: >-
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"} < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10% space left on {{ $labels.mountpoint }}"
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10% memory available on {{ $labels.instance }}"
+
+      - alert: HostLoadHigh
+        expr: >-
+          node_load5 / on (instance) count by (instance) (node_cpu_seconds_total{mode="idle"}) > 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5-minute load is over twice the CPU count on {{ $labels.instance }}"
+
+      - alert: HostClockNotSynchronised
+        expr: node_timex_sync_status == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "System clock on {{ $labels.instance }} is not synchronised"
