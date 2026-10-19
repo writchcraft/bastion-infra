@@ -1,0 +1,55 @@
+---
+# Full server configuration. Safe to run repeatedly: a second run against an
+# already-configured server should report no changes.
+#
+#   ansible-playbook playbooks/server.yml
+#   ansible-playbook playbooks/server.yml --tags firewall,ssh
+#   ansible-playbook playbooks/server.yml --check --diff
+#
+# Role order matters:
+#   firewall runs before ssh, so a new SSH port is allowed before sshd moves;
+#   docker runs before monitoring, which deploys containers.
+
+- name: Configure Bastion server
+  hosts: bastion_servers
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Run preflight checks
+      ansible.builtin.import_tasks: tasks/preflight.yml
+      tags: [always]
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: users
+      tags: [users]
+    - role: firewall
+      tags: [firewall]
+    - role: ssh
+      tags: [ssh]
+    - role: security
+      tags: [security]
+    - role: docker
+      tags: [docker]
+      when: enable_docker | default(false) | bool
+    - role: postgres
+      tags: [postgres]
+      when: enable_postgres | default(false) | bool
+    - role: monitoring
+      tags: [monitoring]
+      when: enable_monitoring | default(false) | bool
+
+  post_tasks:
+    - name: Summarise the deployment
+      ansible.builtin.debug:
+        msg:
+          - "Host:        {{ inventory_hostname }} ({{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }})"
+          - "Admin users: {{ bastion_present_admin_users | map(attribute='name') | join(', ') }}"
+          - "SSH port:    {{ ssh_port | default(22) }}"
+          - "Docker:      {{ 'enabled' if enable_docker | default(false) | bool else 'disabled' }}"
+          - "PostgreSQL:  {{ 'enabled' if enable_postgres | default(false) | bool else 'disabled' }}"
+          - "Monitoring:  {{ 'enabled' if enable_monitoring | default(false) | bool else 'disabled' }}"
+          - "Next step:   ansible-playbook playbooks/verify.yml"
+      tags: [always]

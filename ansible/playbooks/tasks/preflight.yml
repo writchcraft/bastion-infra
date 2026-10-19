@@ -1,0 +1,44 @@
+---
+# Shared preflight checks, imported by every playbook before any change is made.
+# A failed assertion here stops the run with an explanation instead of leaving
+# a half-configured server.
+
+- name: Check the target operating system is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_version'] in bastion_supported_ubuntu_versions
+    fail_msg: >-
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} is not a supported
+      target. Supported: Ubuntu {{ bastion_supported_ubuntu_versions | join(', ') }}.
+      Set bastion_allow_unsupported_os=true to try anyway.
+    quiet: true
+  when: not (bastion_allow_unsupported_os | default(false) | bool)
+
+- name: Identify the user Ansible is connected as
+  ansible.builtin.command:
+    cmd: id -un
+  become: false
+  changed_when: false
+  register: preflight_connection_user
+
+- name: Record the connection user for lockout checks
+  ansible.builtin.set_fact:
+    bastion_connection_user: "{{ preflight_connection_user.stdout }}"
+
+- name: Check the administrator account is defined
+  ansible.builtin.assert:
+    that:
+      - bastion_admin_user is defined
+      - bastion_admin_user in (bastion_present_admin_users | map(attribute='name'))
+    fail_msg: >-
+      bastion_admin_user ({{ bastion_admin_user | default('undefined') }}) must be listed in admin_users
+      with state "present". It is the account every run after bootstrap connects as.
+    quiet: true
+
+- name: Check feature dependencies
+  ansible.builtin.assert:
+    that:
+      - not (enable_monitoring | default(false) | bool) or (enable_docker | default(false) | bool)
+    fail_msg: enable_monitoring requires enable_docker, because the monitoring stack runs under Docker Compose.
+    quiet: true
