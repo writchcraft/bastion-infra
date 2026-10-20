@@ -1,0 +1,43 @@
+{% set critical_failed = verify_results | selectattr('severity', 'equalto', 'critical') | rejectattr('ok') | list %}
+{% set warnings = verify_results | selectattr('severity', 'equalto', 'warning') | rejectattr('ok') | list %}
+# Verification report: {{ inventory_hostname }}
+
+| | |
+|---|---|
+| Result | **{{ 'FAILED' if critical_failed | length > 0 else 'PASSED' }}** |
+| Checks passed | {{ verify_results | selectattr('ok') | list | length }} / {{ verify_results | length }} |
+| Warnings | {{ warnings | length }} |
+| Host | {{ ansible_facts['hostname'] }} ({{ ansible_facts['default_ipv4']['address'] | default('no IPv4') }}) |
+| OS | {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}, kernel {{ ansible_facts['kernel'] }} |
+| Checked at | {{ ansible_facts['date_time']['iso8601'] }} |
+| Checked as | {{ bastion_connection_user }} |
+
+| Status | Area | Check | Detail |
+|---|---|---|---|
+{% for result in verify_results %}
+| {{ 'PASS' if result.ok else ('WARN' if result.severity == 'warning' else 'FAIL') }} | {{ result.area }} | {{ result.check }} | {{ result.detail | trim | replace('|', '\\|') }} |
+{% endfor %}
+{% if critical_failed | length > 0 %}
+
+## Failed checks
+
+{% for result in critical_failed %}
+- **{{ result.area }}: {{ result.check }}** ({{ result.detail | trim }})
+{% endfor %}
+
+See `docs/troubleshooting.md` for diagnosis steps.
+{% endif %}
+
+## Listening TCP sockets
+
+| Address | Port | Process |
+|---|---|---|
+{% for listener in ansible_facts.tcp_listen | default([]) | sort(attribute='port') %}
+| {{ listener.address }} | {{ listener.port }} | {{ listener.name }} |
+{% endfor %}
+
+## Firewall
+
+```text
+{{ verify_ufw.stdout | default('ufw status unavailable') }}
+```
