@@ -1,0 +1,460 @@
+---
+# Deployment verification: DEPLOY -> VERIFY -> REPORT.
+#
+# Read-only. Collects evidence from the running server, evaluates every check,
+# writes a Markdown report to reports/ on the control machine, and fails only
+# at the end so one broken service never hides the state of the others.
+#
+#   ansible-playbook playbooks/verify.yml
+#
+# Checks are "critical" (fail the run) or "warning" (reported only).
+
+- name: Verify Bastion server
+  hosts: bastion_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    verify_report_dir: "{{ playbook_dir }}/../../reports"
+    verify_ssh_port: "{{ ssh_port | default(22) | int }}"
+    verify_docker: "{{ enable_docker | default(false) | bool }}"
+    verify_postgres: "{{ enable_postgres | default(false) | bool }}"
+    verify_monitoring: "{{ enable_monitoring | default(false) | bool }}"
+    verify_postgres_port: "{{ postgres_port | default(5432) | int }}"
+    verify_grafana_listen: "{{ monitoring_grafana_listen_address | default('127.0.0.1') }}"
+    verify_grafana_port: "{{ monitoring_grafana_port | default(3000) | int }}"
+    verify_grafana_host: "{{ '127.0.0.1' if verify_grafana_listen in ['0.0.0.0', '127.0.0.1'] else verify_grafana_listen }}"
+    verify_grafana_url: "http://{{ verify_grafana_host }}:{{ verify_grafana_port }}"
+    verify_prometheus_url: "http://{{ monitoring_prometheus_listen | default('127.0.0.1:9090') }}"
+    verify_node_exporter_url: "http://{{ monitoring_node_exporter_listen | default('127.0.0.1:9100') }}"
+    # Extra TCP ports allowed to listen on non-loopback addresses.
+    verify_extra_public_ports: []
+
+  pre_tasks:
+    - name: Run preflight checks
+      ansible.builtin.import_tasks: tasks/preflight.yml
+
+  tasks:
+    # --- Collect evidence ---------------------------------------------------------------
+    - name: Gather service state
+      ansible.builtin.service_facts:
+
+    - name: Gather listening ports
+      community.general.listen_ports_facts:
+        command: ss
+
+    - name: Read the account databases
+      ansible.builtin.getent:
+        database: "{{ item }}"
+      loop: [passwd, group, shadow]
+
+    - name: Validate the sshd configuration
+      ansible.builtin.command:
+        cmd: /usr/sbin/sshd -t
+      register: verify_sshd_test
+      changed_when: false
+      failed_when: false
+
+    - name: Read the effective sshd configuration
+      ansible.builtin.command:
+        cmd: /usr/sbin/sshd -T
+      register: verify_sshd_effective
+      changed_when: false
+      failed_when: false
+
+    - name: Read the firewall status
+      ansible.builtin.command:
+        cmd: ufw status verbose
+      register: verify_ufw
+      changed_when: false
+      failed_when: false
+
+    - name: Read the fail2ban SSH jail
+      ansible.builtin.command:
+        cmd: fail2ban-client status sshd
+      register: verify_fail2ban
+      changed_when: false
+      failed_when: false
+
+    - name: Read the unattended-upgrades setting
+      ansible.builtin.command:
+        cmd: apt-config dump APT::Periodic::Unattended-Upgrade
+      register: verify_unattended
+      changed_when: false
+      failed_when: false
+
+    - name: Read the clock synchronisation state
+      ansible.builtin.command:
+        cmd: timedatectl show --property=NTPSynchronized --value
+      register: verify_ntp
+      changed_when: false
+      failed_when: false
+
+    - name: Check for a pending reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: verify_reboot
+
+    - name: Query Docker
+      when: verify_docker | bool
+      block:
+        - name: Query the Docker daemon
+          ansible.builtin.command:
+            cmd: docker info --format '{{ "{{" }} .ServerVersion {{ "}}" }}'
+          register: verify_docker_info
+          changed_when: false
+          failed_when: false
+
+        - name: Query the Compose plugin
+          ansible.builtin.command:
+            cmd: docker compose version --short
+          register: verify_compose
+          changed_when: false
+          failed_when: false
+
+    - name: Query PostgreSQL
+      when: verify_postgres | bool
+      block:
+        - name: Check PostgreSQL accepts connections
+          ansible.builtin.command:
+            cmd: pg_isready --host=/var/run/postgresql --port={{ verify_postgres_port }}
+          register: verify_pg_ready
+          changed_when: false
+          failed_when: false
+
+        - name: List PostgreSQL databases
+          community.postgresql.postgresql_query:
+            query: SELECT datname FROM pg_database WHERE NOT datistemplate
+            login_unix_socket: /var/run/postgresql
+            port: "{{ verify_postgres_port }}"
+          become: true
+          become_user: postgres
+          register: verify_pg_databases
+          failed_when: false
+
+        - name: Check the backup timer
+          ansible.builtin.systemd_service:
+            name: bastion-pg-backup.timer
+          register: verify_pg_backup_timer
+          failed_when: false
+
+    - name: Query the monitoring stack
+      when: verify_monitoring | bool
+      block:
+        - name: Inspect monitoring containers
+          ansible.builtin.command:
+            argv: [docker, inspect, --format, "{{ '{{' }}.Name{{ '}}' }} {{ '{{' }}.State.Status{{ '}}' }}", prometheus, grafana]
+          register: verify_containers
+          changed_when: false
+          failed_when: false
+
+        - name: Check Prometheus readiness
+          ansible.builtin.uri:
+            url: "{{ verify_prometheus_url }}/-/ready"
+          register: verify_prometheus_ready
+          failed_when: false
+
+        # Targets report "unknown" until their first scrape, so allow a minute.
+        # An exhausted `until` loop always marks the task failed, whatever
+        # failed_when says; ignore_errors lets the check below report it
+        # instead of aborting the remaining verification.
+        - name: Wait for every Prometheus target to be up
+          ansible.builtin.uri:
+            url: "{{ verify_prometheus_url }}/api/v1/targets?state=active"
+            return_content: true
+          register: verify_prometheus_targets
+          until: >-
+            verify_prometheus_targets.json is defined
+            and verify_prometheus_targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length == 0
+          retries: 12
+          delay: 5
+          ignore_errors: true
+
+        - name: Scrape node_exporter
+          ansible.builtin.uri:
+            url: "{{ verify_node_exporter_url }}/metrics"
+            return_content: true
+          register: verify_node_metrics
+          failed_when: false
+
+        - name: Check Grafana health
+          ansible.builtin.uri:
+            url: "{{ verify_grafana_url }}/api/health"
+          register: verify_grafana_health
+          failed_when: false
+
+        - name: Log in to Grafana with the vault credentials
+          ansible.builtin.uri:
+            url: "{{ verify_grafana_url }}/api/dashboards/uid/bastion-host"
+            user: "{{ monitoring_grafana_admin_user | default('admin') }}"
+            password: "{{ monitoring_grafana_admin_password }}"
+            force_basic_auth: true
+          register: verify_grafana_dashboard
+          failed_when: false
+          no_log: true
+
+    # --- Evaluate -----------------------------------------------------------------------
+    - name: Evaluate checks
+      ansible.builtin.set_fact:
+        verify_results: "{{ verify_checks | selectattr('enabled') | list }}"
+      vars:
+        admin_names: "{{ bastion_present_admin_users | map(attribute='name') | list }}"
+        missing_admins: "{{ admin_names | difference(ansible_facts.getent_passwd.keys()) }}"
+        ssh_group: "{{ users_ssh_group | default('sshusers') }}"
+        ssh_group_members: "{{ (ansible_facts.getent_group[ssh_group] | default(['', '', '']))[2].split(',') }}"
+        disabled_present: "{{ users_disabled_accounts | default([]) | intersect(ansible_facts.getent_shadow.keys()) }}"
+        disabled_unlocked: >-
+          {{ disabled_present | reject('in', ansible_facts.getent_shadow | dict2items
+             | selectattr('value.0', 'match', '^!') | map(attribute='key') | list) | list }}
+        sshd: "{{ verify_sshd_effective.stdout | default('') }}"
+        ufw: "{{ verify_ufw.stdout | default('') }}"
+        listeners: "{{ ansible_facts.tcp_listen | default([]) }}"
+        public_listeners: >-
+          {{ listeners | rejectattr('address', 'match', '^127\.') | rejectattr('address', 'equalto', '::1') | list }}
+        listening_ports: "{{ listeners | map(attribute='port') | map('int') | unique | list }}"
+        allowed_public_ports: >-
+          {{ [verify_ssh_port | int]
+             + ([verify_grafana_port | int] if verify_monitoring | bool and verify_grafana_listen != '127.0.0.1' else [])
+             + ([verify_postgres_port | int] if verify_postgres | bool and postgres_allowed_networks | default([]) | length > 0 else [])
+             + (firewall_rules | default([]) | map(attribute='port') | map('int') | list)
+             + verify_extra_public_ports }}
+        unexpected_public: "{{ public_listeners | rejectattr('port', 'in', allowed_public_ports) | list }}"
+        expected_db_names: "{{ postgres_databases | default([]) | map(attribute='name') | list }}"
+        actual_db_names: "{{ verify_pg_databases.query_result | default([]) | map(attribute='datname') | list }}"
+        missing_db_names: "{{ expected_db_names | difference(actual_db_names) }}"
+        expected_password_auth: "{{ 'yes' if ssh_password_authentication | default(false) | bool else 'no' }}"
+        container_states: "{{ verify_containers.stdout_lines | default([]) }}"
+        targets: "{{ verify_prometheus_targets.json.data.activeTargets | default([]) }}"
+        targets_down: "{{ targets | rejectattr('health', 'equalto', 'up') | map(attribute='scrapePool') | list }}"
+        verify_checks:
+          # Users
+          - area: Users
+            check: Administrator accounts exist
+            enabled: true
+            severity: critical
+            ok: "{{ missing_admins | length == 0 }}"
+            detail: >-
+              {{ 'all present: ' ~ admin_names | join(', ') if missing_admins | length == 0
+                 else 'missing: ' ~ missing_admins | join(', ') }}
+          - area: Users
+            check: Administrators are in the SSH access group
+            enabled: true
+            severity: critical
+            ok: "{{ admin_names | difference(ssh_group_members) | length == 0 }}"
+            detail: "{{ ssh_group }} = {{ ssh_group_members | select | join(', ') }}"
+          - area: Users
+            check: Disabled default accounts are locked
+            enabled: "{{ disabled_present | length > 0 }}"
+            severity: critical
+            ok: "{{ disabled_unlocked | length == 0 }}"
+            detail: >-
+              {{ 'locked: ' ~ disabled_present | join(', ') if disabled_unlocked | length == 0
+                 else 'still unlocked: ' ~ disabled_unlocked | join(', ') }}
+          # SSH
+          - area: SSH
+            check: sshd is running
+            enabled: true
+            severity: critical
+            ok: "{{ ansible_facts.services['ssh.service'].state | default('') == 'running' }}"
+            detail: "ssh.service {{ ansible_facts.services['ssh.service'].state | default('not found') }}"
+          - area: SSH
+            check: sshd configuration is valid
+            enabled: true
+            severity: critical
+            ok: "{{ verify_sshd_test.rc | default(1) == 0 }}"
+            detail: "{{ 'sshd -t passed' if verify_sshd_test.rc | default(1) == 0 else verify_sshd_test.stderr | default('') }}"
+          - area: SSH
+            check: Listening on the configured port
+            enabled: true
+            severity: critical
+            ok: "{{ sshd is search('(?m)^port ' ~ verify_ssh_port ~ '$') and verify_ssh_port | int in listening_ports }}"
+            detail: "port {{ verify_ssh_port }}"
+          - area: SSH
+            check: Password authentication matches policy
+            enabled: true
+            severity: critical
+            ok: "{{ sshd is search('(?m)^passwordauthentication ' ~ expected_password_auth ~ '$') }}"
+            detail: "{{ sshd | regex_search('(?m)^passwordauthentication .*$') | default('not reported', true) }}"
+          - area: SSH
+            check: Root login matches policy
+            enabled: true
+            severity: critical
+            ok: "{{ sshd is search('(?m)^permitrootlogin ' ~ ssh_permit_root_login | default('no') ~ '$') }}"
+            detail: "{{ sshd | regex_search('(?m)^permitrootlogin .*$') | default('not reported', true) }}"
+          - area: SSH
+            check: Logins restricted to the SSH access group
+            enabled: "{{ ssh_allow_groups | default([ssh_group]) | length > 0 }}"
+            severity: critical
+            ok: "{{ sshd is search('(?m)^allowgroups ' ~ ssh_group) }}"
+            detail: "{{ sshd | regex_search('(?m)^allowgroups .*$') | default('not reported', true) }}"
+          # Firewall
+          - area: Firewall
+            check: UFW is active
+            enabled: true
+            severity: critical
+            ok: "{{ ufw is search('Status: active') }}"
+            detail: "{{ ufw | regex_search('Status: \\w+') | default('ufw not reporting', true) }}"
+          - area: Firewall
+            check: Incoming traffic denied by default
+            enabled: true
+            severity: critical
+            ok: "{{ ufw is search('Default: deny \\(incoming\\)') }}"
+            detail: "{{ ufw | regex_search('Default: .*') | default('default policy not reported', true) }}"
+          - area: Firewall
+            check: SSH port allowed
+            enabled: true
+            severity: critical
+            ok: "{{ ufw is search('(?m)^' ~ verify_ssh_port ~ '/tcp\\s+(ALLOW|LIMIT) IN') }}"
+            detail: "{{ verify_ssh_port }}/tcp"
+          - area: Firewall
+            check: No unexpected TCP listeners on public addresses
+            enabled: true
+            severity: critical
+            ok: "{{ unexpected_public | length == 0 }}"
+            detail: >-
+              {{ 'public ports: ' ~ (public_listeners | map(attribute='port') | unique | sort | join(', '))
+                 if unexpected_public | length == 0
+                 else 'unexpected: ' ~ (unexpected_public | map(attribute='address')
+                   | zip(unexpected_public | map(attribute='port'), unexpected_public | map(attribute='name'))
+                   | map('join', ':') | join(', ')) }}
+          # Security baseline
+          - area: Security
+            check: fail2ban SSH jail is active
+            enabled: "{{ security_fail2ban | default(true) | bool }}"
+            severity: critical
+            ok: "{{ verify_fail2ban.rc | default(1) == 0 }}"
+            detail: >-
+              {{ verify_fail2ban.stdout | default('') | regex_search('Currently banned:\s+\d+')
+                 | default('jail not running', true) }}
+          - area: Security
+            check: Automatic security updates enabled
+            enabled: "{{ security_unattended_upgrades | default(true) | bool }}"
+            severity: critical
+            ok: "{{ verify_unattended.stdout | default('') is search('\"1\"') }}"
+            detail: "{{ verify_unattended.stdout | default('') | trim }}"
+          - area: Security
+            check: Clock is synchronised
+            enabled: true
+            severity: warning
+            ok: "{{ verify_ntp.stdout | default('') | trim == 'yes' }}"
+            detail: "NTPSynchronized={{ verify_ntp.stdout | default('unknown') | trim }}"
+          - area: Security
+            check: No reboot pending
+            enabled: true
+            severity: warning
+            ok: "{{ not verify_reboot.stat.exists }}"
+            detail: "{{ 'reboot required to finish upgrades' if verify_reboot.stat.exists else 'none pending' }}"
+          # Docker
+          - area: Docker
+            check: Docker daemon responds
+            enabled: "{{ verify_docker | bool }}"
+            severity: critical
+            ok: "{{ verify_docker_info.rc | default(1) == 0 }}"
+            detail: "Engine {{ verify_docker_info.stdout | default('unreachable') }}"
+          - area: Docker
+            check: Compose plugin available
+            enabled: "{{ verify_docker | bool }}"
+            severity: critical
+            ok: "{{ verify_compose.rc | default(1) == 0 }}"
+            detail: "Compose {{ verify_compose.stdout | default('missing') }}"
+          # PostgreSQL
+          - area: PostgreSQL
+            check: Server accepts connections
+            enabled: "{{ verify_postgres | bool }}"
+            severity: critical
+            ok: "{{ verify_pg_ready.rc | default(1) == 0 }}"
+            detail: "{{ verify_pg_ready.stdout | default('') }}"
+          - area: PostgreSQL
+            check: Configured databases exist
+            enabled: "{{ verify_postgres | bool }}"
+            severity: critical
+            ok: "{{ missing_db_names | length == 0 }}"
+            detail: >-
+              {{ 'present: ' ~ expected_db_names | join(', ') if missing_db_names | length == 0
+                 else 'missing: ' ~ missing_db_names | join(', ') }}
+          - area: PostgreSQL
+            check: Backup timer is active
+            enabled: "{{ verify_postgres | bool and postgres_backup_enabled | default(true) | bool }}"
+            severity: critical
+            ok: "{{ verify_pg_backup_timer.status.ActiveState | default('') == 'active' }}"
+            detail: >-
+              bastion-pg-backup.timer {{ verify_pg_backup_timer.status.ActiveState | default('unknown') }},
+              next run {{ verify_pg_backup_timer.status.NextElapseUSecRealtime | default('unknown') }}
+          # Monitoring
+          - area: Monitoring
+            check: Monitoring containers are running
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ container_states | select('search', ' running$') | list | length == 2 }}"
+            detail: "{{ container_states | join(', ') | default('not found', true) }}"
+          - area: Monitoring
+            check: Prometheus is ready
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ verify_prometheus_ready.status | default(-1) == 200 }}"
+            detail: "HTTP {{ verify_prometheus_ready.status | default('n/a') }}"
+          - area: Monitoring
+            check: All scrape targets are up
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ targets | length > 0 and targets_down | length == 0 }}"
+            detail: >-
+              {{ 'no target data (Prometheus API unreachable)' if targets | length == 0
+                 else (targets | length) ~ ' targets up' if targets_down | length == 0
+                 else 'down: ' ~ targets_down | join(', ') }}
+          - area: Monitoring
+            check: node_exporter publishes host metrics
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ verify_node_metrics.content | default('') is search('(?m)^node_load1 ') }}"
+            detail: "{{ verify_node_exporter_url }}/metrics"
+          - area: Monitoring
+            check: Grafana is healthy
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ verify_grafana_health.status | default(-1) == 200 }}"
+            detail: "HTTP {{ verify_grafana_health.status | default('n/a') }}"
+          - area: Monitoring
+            check: Vault credentials open the provisioned dashboard
+            enabled: "{{ verify_monitoring | bool }}"
+            severity: critical
+            ok: "{{ verify_grafana_dashboard.status | default(-1) == 200 }}"
+            detail: "HTTP {{ verify_grafana_dashboard.status | default('n/a') }} for dashboard uid bastion-host"
+
+    # --- Report -------------------------------------------------------------------------
+    - name: Create the report directory
+      ansible.builtin.file:
+        path: "{{ verify_report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Write the verification report
+      ansible.builtin.template:
+        src: verify-report.md.j2
+        dest: "{{ verify_report_dir }}/verify-{{ inventory_hostname }}.md"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Show results
+      ansible.builtin.debug:
+        msg: |
+          {% for result in verify_results %}
+          {% set status = 'PASS' if result.ok else ('WARN' if result.severity == 'warning' else 'FAIL') %}
+          {{ status }}  {{ result.area }}: {{ result.check }} ({{ result.detail | trim }})
+          {% endfor %}
+
+    - name: Fail if any critical check failed
+      ansible.builtin.assert:
+        that:
+          - verify_results | selectattr('severity', 'equalto', 'critical') | rejectattr('ok') | list | length == 0
+        fail_msg: >-
+          Critical checks failed:
+          {{ verify_results | selectattr('severity', 'equalto', 'critical') | rejectattr('ok') | map(attribute='check') | join('; ') }}.
+          See reports/verify-{{ inventory_hostname }}.md and docs/troubleshooting.md.
+        success_msg: >-
+          {{ verify_results | selectattr('ok') | list | length }}/{{ verify_results | length }} checks passed.
+          Report: reports/verify-{{ inventory_hostname }}.md
