@@ -1,0 +1,5 @@
+---
+# CI secrets template. The workflow runs scripts/init-vault.sh ci, which
+# fills in random values and encrypts the result for that run only.
+vault_grafana_admin_password: CHANGE_ME
+vault_postgres_app_password: CHANGE_ME
