@@ -1,0 +1,12 @@
+---
+# Example secrets for production. FAKE VALUES ONLY. See docs/secrets.md.
+#
+#   scripts/init-vault.sh production
+#
+# generates random passwords for every CHANGE_ME value. Password hashes for
+# sudo (vault_alice_password_hash) must be created by hand:
+#   mkpasswd --method=sha-512
+vault_grafana_admin_password: CHANGE_ME
+vault_postgres_app_password: CHANGE_ME
+vault_postgres_reporting_password: CHANGE_ME
+vault_alice_password_hash: "$6$examplesalt$REPLACE_ME_WITH_A_REAL_SHA512_HASH"

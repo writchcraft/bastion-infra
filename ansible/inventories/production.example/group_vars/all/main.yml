@@ -1,0 +1,86 @@
+---
+# Example production configuration. Every value here is a placeholder.
+# See docs/configuration.md for the full variable reference.
+
+# --- Connection ---------------------------------------------------------------
+bootstrap_user: ubuntu
+bastion_admin_user: ops
+ansible_user: "{{ bastion_admin_user }}"
+
+# --- Feature switches -----------------------------------------------------------
+enable_docker: true
+enable_postgres: true
+enable_monitoring: true
+
+# --- System baseline ------------------------------------------------------------
+server_timezone: Etc/UTC
+server_locale: en_US.UTF-8
+# Keep false unless a maintenance window allows Ansible to reboot hosts.
+common_reboot_if_required: false
+
+# --- Users ------------------------------------------------------------------------
+# Public keys only. Private keys never belong in this repository.
+admin_users:
+  - name: "{{ bastion_admin_user }}"
+    comment: Operations
+    ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIREPLACE_ME_WITH_A_REAL_PUBLIC_KEY ops@example"
+    sudo: true
+    sudo_nopasswd: true
+  - name: alice
+    comment: Example second administrator
+    shell: /bin/bash
+    ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIREPLACE_ME_WITH_ALICES_PUBLIC_KEY alice@example"
+    sudo: true
+    # Require a password for sudo. The hash is generated with
+    # `mkpasswd --method=sha-512` and stored in vault.yml.
+    sudo_nopasswd: false
+    password_hash: "{{ vault_alice_password_hash }}"
+  - name: former-admin
+    state: absent  # account removed, home directory kept
+
+# Cloud images ship a default "ubuntu" account with passwordless sudo.
+# Once bootstrap has created the admin users, lock it.
+users_disabled_accounts:
+  - ubuntu
+
+# --- SSH and firewall ---------------------------------------------------------------
+ssh_port: 22
+# Restrict SSH to a management network or VPN range.
+firewall_ssh_allowed_sources:
+  - 198.51.100.0/24
+firewall_rules:
+  - port: 443
+    proto: tcp
+    comment: public HTTPS (reverse proxy)
+fail2ban_ignore_networks:
+  - 198.51.100.0/24
+
+# --- Docker -------------------------------------------------------------------------
+# Membership of the docker group is root-equivalent. Grant it deliberately.
+docker_users: []
+
+# --- PostgreSQL ---------------------------------------------------------------------
+postgres_version: 16
+postgres_users:
+  - name: app
+    password: "{{ vault_postgres_app_password }}"
+  - name: reporting
+    password: "{{ vault_postgres_reporting_password }}"
+postgres_databases:
+  - name: app
+    owner: app
+  - name: reporting
+    owner: reporting
+postgres_allowed_networks:
+  - 10.0.10.0/24
+postgres_backup_retention_days: 14
+
+# --- Monitoring ---------------------------------------------------------------------
+monitoring_domain: grafana.example.com
+monitoring_grafana_admin_password: "{{ vault_grafana_admin_password }}"
+# Grafana stays on 127.0.0.1 (reach it through an SSH tunnel) unless exposed:
+# monitoring_grafana_listen_address: 0.0.0.0
+# monitoring_grafana_allowed_sources:
+#   - 198.51.100.0/24
