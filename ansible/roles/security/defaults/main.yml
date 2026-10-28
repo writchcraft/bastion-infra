@@ -29,6 +29,8 @@ security_sysctl:
   net.ipv4.conf.all.log_martians: 1
   net.ipv4.conf.default.log_martians: 1
 security_sysctl_file: /etc/sysctl.d/60-bastion.conf
+# UFW loads this file on every start/reload; overlapping keys are kept in line.
+security_ufw_sysctl_file: /etc/ufw/sysctl.conf
 
 # --- Unneeded services ----------------------------------------------------------------
 # Services to stop, disable and mask, if installed. Empty by default: what is

@@ -133,6 +133,11 @@ Only settings that differ from Ubuntu's defaults are applied:
 | `net.ipv4.conf.*.send_redirects` | 0 | The host is not a router |
 | `net.ipv4.conf.*.log_martians` | 1 | Log packets with impossible source addresses (spoofing indicator) |
 
+UFW applies its own `/etc/ufw/sysctl.conf` every time it starts or reloads,
+and that file ships with `log_martians=0`. Left alone, it would silently undo
+the setting above at boot and on any firewall change, so the role rewrites
+any key that both files set to the value from `security_sysctl`.
+
 IP forwarding is left alone because Docker requires it. Ubuntu already enables
 SYN cookies, reverse-path filtering, `kptr_restrict`, `dmesg_restrict` and the
 `protected_*` filesystem settings; restating them would add noise without

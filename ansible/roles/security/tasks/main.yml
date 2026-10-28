@@ -75,6 +75,26 @@
   loop_control:
     label: "{{ item.key }} = {{ item.value }}"
 
+# UFW re-applies /etc/ufw/sysctl.conf whenever it starts or reloads, which
+# would put back its own values (e.g. log_martians=0) over the ones above,
+# both at boot and on the next firewall change. Align any setting it also
+# manages; settings it does not mention are left out of its file.
+- name: Check for the UFW kernel parameter file
+  ansible.builtin.stat:
+    path: "{{ security_ufw_sysctl_file }}"
+  register: security_ufw_sysctl
+
+- name: Keep UFW from reverting kernel network hardening
+  ansible.builtin.lineinfile:
+    path: "{{ security_ufw_sysctl_file }}"
+    regexp: "^(\\s*{{ item.key | replace('.', '[/.]') }}\\s*=).*$"
+    line: "\\g<1>{{ item.value }}"
+    backrefs: true
+  loop: "{{ security_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  when: security_ufw_sysctl.stat.exists
+
 # --- Unneeded services ----------------------------------------------------------------
 
 - name: Gather service facts
