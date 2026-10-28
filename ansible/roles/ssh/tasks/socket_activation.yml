@@ -4,7 +4,8 @@
 # daemon-reload plus a socket restart. Running sshd as a plain service keeps
 # the behaviour that every other Linux server (and every runbook) expects.
 #
-# Existing sessions survive: ssh.service uses KillMode=process.
+# Existing sessions survive: ssh.service uses KillMode=process, and only the
+# listening sshd is ever signalled.
 
 - name: Move sshd off socket activation
   block:
@@ -14,22 +15,67 @@
         enabled: false
         state: stopped
 
+    - name: Stop the current sshd listener
+      ansible.builtin.systemd_service:
+        name: ssh.service
+        state: stopped
+
+    # systemd can lose track of the listener (seen on GitHub runners), leaving
+    # it holding the port as a "left-over process" that the new sshd cannot
+    # bind past. Only listening sshd processes are ended; session processes
+    # hold no listening socket, so open connections, this play's included,
+    # survive.
+    - name: End any sshd still listening outside systemd's control
+      ansible.builtin.shell: |
+        set -o pipefail
+        pids=$(ss -Htlnp | grep -o '"sshd",pid=[0-9]*' | cut -d= -f2 | sort -u || true)
+        [ -z "$pids" ] && exit 0
+        # shellcheck disable=SC2086
+        kill $pids
+        for _ in $(seq 1 20); do
+          grep -q '"sshd"' <<< "$(ss -Htlnp)" || { echo killed; exit 0; }
+          sleep 0.5
+        done
+        echo "sshd still listening after SIGTERM" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: ssh_stale_listener
+      changed_when: "'killed' in ssh_stale_listener.stdout"
+
     - name: Start sshd as a standalone service
       ansible.builtin.systemd_service:
         name: ssh.service
         enabled: true
-        state: restarted
+        state: started
         daemon_reload: true
 
   rescue:
+    # Gathered before the restore so the report shows why the switch failed.
+    - name: Collect sshd service diagnostics
+      ansible.builtin.shell: |
+        set +e
+        systemctl status --no-pager ssh.service ssh.socket
+        journalctl --no-pager -n 40 -u ssh.service -u ssh.socket
+        ss -tlnp 'sport = :22'
+        /usr/sbin/sshd -t
+      register: ssh_switch_diagnostics
+      changed_when: false
+      failed_when: false
+
     - name: Restore socket activation
       ansible.builtin.systemd_service:
         name: ssh.socket
         enabled: true
         state: started
+      register: ssh_socket_restore
+      failed_when: false
 
     - name: Report the failed switch
       ansible.builtin.fail:
-        msg: >-
-          sshd could not be started as a standalone service, so socket activation was restored.
-          Inspect `journalctl -u ssh.service` on the server, or set ssh_disable_socket_activation=false.
+        msg:
+          - >-
+            sshd could not be started as a standalone service.
+            Socket activation {{ 'could NOT be' if ssh_socket_restore is failed else 'was' }} restored.
+            Set ssh_disable_socket_activation=false to skip this switch.
+          - "{{ ssh_switch_diagnostics.stdout_lines + ssh_switch_diagnostics.stderr_lines }}"
