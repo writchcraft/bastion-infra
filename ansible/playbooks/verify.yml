@@ -27,6 +27,18 @@
     verify_grafana_url: "http://{{ verify_grafana_host }}:{{ verify_grafana_port }}"
     verify_prometheus_url: "http://{{ monitoring_prometheus_listen | default('127.0.0.1:9090') }}"
     verify_node_exporter_url: "http://{{ monitoring_node_exporter_listen | default('127.0.0.1:9100') }}"
+    # Role defaults are not loaded here, so the security role's defaults are
+    # restated; an inventory override of security_sysctl takes precedence.
+    verify_sysctl_expected: "{{ security_sysctl | default(verify_sysctl_default) }}"
+    verify_sysctl_default:
+      net.ipv4.conf.all.accept_redirects: 0
+      net.ipv4.conf.default.accept_redirects: 0
+      net.ipv6.conf.all.accept_redirects: 0
+      net.ipv6.conf.default.accept_redirects: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.default.send_redirects: 0
+      net.ipv4.conf.all.log_martians: 1
+      net.ipv4.conf.default.log_martians: 1
     # Extra TCP ports allowed to listen on non-loopback addresses.
     verify_extra_public_ports: []
 
@@ -87,6 +99,17 @@
       ansible.builtin.command:
         cmd: timedatectl show --property=NTPSynchronized --value
       register: verify_ntp
+      changed_when: false
+      failed_when: false
+
+    # Live kernel values, not the files: proves nothing (such as UFW) reverted them.
+    - name: Read the kernel network parameters
+      ansible.builtin.command:
+        argv: [sysctl, -n, "{{ item.key }}"]
+      loop: "{{ verify_sysctl_expected | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: verify_sysctl
       changed_when: false
       failed_when: false
 
@@ -223,6 +246,11 @@
         actual_db_names: "{{ verify_pg_databases.query_result | default([]) | map(attribute='datname') | list }}"
         missing_db_names: "{{ expected_db_names | difference(actual_db_names) }}"
         expected_password_auth: "{{ 'yes' if ssh_password_authentication | default(false) | bool else 'no' }}"
+        sysctl_keys: "{{ verify_sysctl_expected | list }}"
+        sysctl_want: "{{ sysctl_keys | zip(verify_sysctl_expected.values() | map('string')) | map('join', '=') | list }}"
+        sysctl_live: "{{ verify_sysctl.results | default([]) | map(attribute='stdout') | map('trim') | list }}"
+        sysctl_got: "{{ sysctl_keys | zip(sysctl_live) | map('join', '=') | list }}"
+        sysctl_wrong: "{{ sysctl_want | difference(sysctl_got) }}"
         container_states: "{{ verify_containers.stdout_lines | default([]) }}"
         targets: "{{ verify_prometheus_targets.json.data.activeTargets | default([]) }}"
         targets_down: "{{ targets | rejectattr('health', 'equalto', 'up') | map(attribute='scrapePool') | list }}"
@@ -332,6 +360,14 @@
             severity: critical
             ok: "{{ verify_unattended.stdout | default('') is search('\"1\"') }}"
             detail: "{{ verify_unattended.stdout | default('') | trim }}"
+          - area: Security
+            check: Kernel network hardening is live
+            enabled: "{{ verify_sysctl_expected | length > 0 }}"
+            severity: critical
+            ok: "{{ sysctl_wrong | length == 0 }}"
+            detail: >-
+              {{ (verify_sysctl_expected | length) ~ ' parameters match' if sysctl_wrong | length == 0
+                 else 'differ: ' ~ sysctl_wrong | join(', ') }}
           - area: Security
             check: Clock is synchronised
             enabled: true

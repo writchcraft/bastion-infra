@@ -19,9 +19,9 @@ jobs:
     name: Lint and syntax check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -50,6 +50,10 @@ jobs:
       - name: shellcheck
         run: shellcheck scripts/*.sh ansible/roles/ssh/files/bastion-sshd-rollback
 
+      # The gate that decides "changed=0" must itself be proven to fail.
+      - name: Test the idempotency gate
+        run: scripts/test-idempotency-check.sh
+
   converge:
     name: Deploy, verify and prove idempotency (Ubuntu 24.04 VM)
     needs: lint
@@ -58,9 +62,9 @@ jobs:
     env:
       ANSIBLE_FORCE_COLOR: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -106,13 +110,20 @@ jobs:
         working-directory: ansible
         run: ../scripts/idempotency-check.sh -i inventories/ci playbooks/server.yml
 
+      - name: Show the verification report on the run page
+        if: always()
+        run: |
+          if [ -f reports/verify-bastion-ci.md ]; then
+            cat reports/verify-bastion-ci.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload the verification report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: verify-report
           path: reports/
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Collect diagnostics
         if: failure()

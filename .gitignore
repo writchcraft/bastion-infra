@@ -32,5 +32,3 @@ __pycache__/
 .vscode/
 .idea/
 
-# Project brief used while building the repository
-.goal.txt

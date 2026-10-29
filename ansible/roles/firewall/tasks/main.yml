@@ -32,15 +32,14 @@
 - name: Keep the current SSH connection port open during a port change
   community.general.ufw:
     rule: "{{ 'limit' if firewall_ssh_rate_limit else 'allow' }}"
-    port: "{{ ansible_port | string }}"
+    port: "{{ ansible_port | default(22) | string }}"
     proto: tcp
     from_ip: "{{ item }}"
     comment: "bastion: ssh (previous port)"
   loop: "{{ firewall_ssh_allowed_sources }}"
   when:
     - ansible_connection | default('ssh') not in ['local']
-    - ansible_port is defined
-    - ansible_port | int != firewall_ssh_port | int
+    - ansible_port | default(22) | int != firewall_ssh_port | int
 
 - name: Allow additional inbound rules
   community.general.ufw:

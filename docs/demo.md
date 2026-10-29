@@ -71,7 +71,7 @@ cat reports/verify-bastion-dev.md
 
 Show: the report table, listening sockets, the firewall rules with their
 `bastion:` comments, and the result line. The development inventory enables
-27 checks, so a healthy server reports "27/27 checks passed".
+28 checks, so a healthy server reports "28/28 checks passed".
 
 ## 7. Show working services
 
@@ -106,17 +106,3 @@ not a sequence of steps.
 ```bash
 scripts/dev-vm.sh down
 ```
-
-## Evidence to capture for the README
-
-| Screenshot | Step |
-|---|---|
-| Unconfigured VM (`ufw status`, `ss -tlnp`) | 2 |
-| Deployment recap | 5 |
-| Verification report | 6 |
-| Grafana "Bastion host overview" dashboard | 7 |
-| `docker compose ps` and `psql -l` | 7 |
-| Idempotent second run with `changed=0` | 8 |
-
-Save them under `docs/images/` and link them from the README's
-"Screenshots / Demo" section.

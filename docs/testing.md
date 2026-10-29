@@ -12,6 +12,7 @@ mistake, and none of them is there for decoration.
 | Integration | Real Ubuntu 24.04 VM | Everything modules actually do | CI `converge` job, or `make demo` on a dev VM |
 | Behavioural | `verify.yml` | The server works: ports, services, auth, endpoints | after every deploy |
 | Idempotency | `scripts/idempotency-check.sh` | Tasks that change something on every run | CI, `make idempotency` |
+| Gate test | `scripts/test-idempotency-check.sh` | The idempotency gate passing when it should fail (changes, no recap, failed run) | CI `lint` job |
 
 ## The CI converge job
 
@@ -80,5 +81,5 @@ runs.
 
 - Multi-host inventories (the roles are host-local, but CI uses one host).
 - `ssh_port` changes and SSH rollback after a failed login. The logic is reviewed and the rollback script is shellchecked, but CI does not deliberately break SSH.
-- Restoring from a backup. The procedure is documented in [troubleshooting.md](troubleshooting.md#backups-and-restore).
+- Backups. Only the timer being active is verified: the backup script is never run and no restore is exercised in CI. The restore procedure is documented in [troubleshooting.md](troubleshooting.md#backups-and-restore).
 - Reboot handling (`common_reboot_if_required`). CI cannot reboot its runner.

@@ -29,7 +29,7 @@ changes. Run the verification and the server proves it.
 | **Docker** | Engine and Compose plugin from Docker's signed repo, validated `daemon.json`, log rotation, no TCP socket |
 | **PostgreSQL** | PGDG packages, SCRAM auth, TLS-only remote access per database, validated config with restart only when required, nightly `pg_dump` timer |
 | **Monitoring** | node_exporter, Prometheus and Grafana with a provisioned host dashboard and alert rules, without bypassing the firewall |
-| **Verification** | 27+ evidence-based checks and a Markdown report: services, effective config, open ports, endpoints, credentials |
+| **Verification** | 28+ evidence-based checks and a Markdown report: services, effective config, open ports, endpoints, credentials |
 
 ## Architecture
 
@@ -150,8 +150,8 @@ The decisions that matter most (all explained in [docs/security.md](docs/securit
 | Playbook structure | `ansible-playbook --syntax-check` |
 | Shell scripts | `shellcheck` |
 | Real deployment | CI job on a GitHub `ubuntu-24.04` VM: bootstrap locally, then deploy over real SSH to itself |
-| Does it work? | `verify.yml` (27+ checks, report uploaded as a CI artifact) |
-| Idempotency | second `server.yml` run in CI must report `changed=0` |
+| Does it work? | `verify.yml` (28+ checks; report shown on the run page and uploaded as an artifact) |
+| Idempotency | second `server.yml` run in CI must report `changed=0`; the gate script has its own test (`scripts/test-idempotency-check.sh`) |
 
 The CI target is a freshly created, throw-away GitHub runner VM, but it is
 not a pristine image: it ships with Docker, PostgreSQL and other tools
@@ -166,12 +166,12 @@ and the [workflow history](https://github.com/writchcraft/bastion-infra/actions/
 shows it green. Each run:
 
 - bootstraps an administrator, deploys over real SSH, and runs `verify.yml`;
-- uploads the generated report as the `verify-report` artifact (`verify-bastion-ci.md`, one row per check);
-- reruns `server.yml` through `idempotency-check.sh`, which exits non-zero and lists the offending tasks if anything reports `changed`.
+- prints the generated report (one row per check) on the run's summary page and uploads it as the `verify-report` artifact;
+- reruns `server.yml` through `idempotency-check.sh`, which exits non-zero and lists the offending tasks if anything reports `changed`, or if no play recap is produced; the recap is also shown on the run's summary page.
 
 The step-by-step local demonstration (fresh Multipass VM, expected output at
 each stage) is in [docs/demo.md](docs/demo.md). Terminal captures and a
-Grafana screenshot have not been added to the repository yet.
+Grafana screenshot have not been added to the repository.
 
 ## Project structure
 
