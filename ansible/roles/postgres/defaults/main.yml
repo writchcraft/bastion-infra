@@ -10,7 +10,6 @@ postgres_apt_key_url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
 postgres_apt_key_path: /etc/apt/keyrings/postgresql.asc
 
 postgres_config_dir: "/etc/postgresql/{{ postgres_version }}/{{ postgres_cluster }}"
-postgres_data_dir: "/var/lib/postgresql/{{ postgres_version }}/{{ postgres_cluster }}"
 postgres_service: "postgresql@{{ postgres_version }}-{{ postgres_cluster }}"
 
 # Login roles. Passwords must come from the vault.

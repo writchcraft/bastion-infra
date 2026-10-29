@@ -153,19 +153,25 @@ The decisions that matter most (all explained in [docs/security.md](docs/securit
 | Does it work? | `verify.yml` (27+ checks, report uploaded as a CI artifact) |
 | Idempotency | second `server.yml` run in CI must report `changed=0` |
 
-Why a VM and not containers, and what is not covered: [docs/testing.md](docs/testing.md).
+The CI target is a freshly created, throw-away GitHub runner VM, but it is
+not a pristine image: it ships with Docker, PostgreSQL and other tools
+preinstalled. The truly fresh path is the Multipass workflow in
+[docs/demo.md](docs/demo.md). Why a VM and not containers, and what is not
+covered: [docs/testing.md](docs/testing.md).
 
-## Screenshots / Demo
+## Evidence
 
-The full fresh-VM demonstration, step by step, is in
-[docs/demo.md](docs/demo.md). Planned evidence:
+The proof is the CI run itself: every push to `main` runs the full lifecycle
+and the [workflow history](https://github.com/writchcraft/bastion-infra/actions/workflows/ci.yml)
+shows it green. Each run:
 
-- fresh VM before configuration
-- deployment output
-- verification report
-- second run with `changed=0`
-- Grafana "Bastion host overview" dashboard
-- Docker services and PostgreSQL databases
+- bootstraps an administrator, deploys over real SSH, and runs `verify.yml`;
+- uploads the generated report as the `verify-report` artifact (`verify-bastion-ci.md`, one row per check);
+- reruns `server.yml` through `idempotency-check.sh`, which exits non-zero and lists the offending tasks if anything reports `changed`.
+
+The step-by-step local demonstration (fresh Multipass VM, expected output at
+each stage) is in [docs/demo.md](docs/demo.md). Terminal captures and a
+Grafana screenshot have not been added to the repository yet.
 
 ## Project structure
 

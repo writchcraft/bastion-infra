@@ -3,11 +3,11 @@
 # systemd-run before each SSH change, and disarmed once a fresh login has
 # succeeded. If it fires, the change was never confirmed.
 #
-# Usage: bastion-sshd-rollback <backup-file|none>
+# Usage: bastion-sshd-rollback <backup-file|none> [drop-in-path]
 set -eu
 
-DROP_IN=/etc/ssh/sshd_config.d/00-bastion.conf
 BACKUP="${1:-none}"
+DROP_IN="${2:-/etc/ssh/sshd_config.d/00-bastion.conf}"
 
 logger -t bastion-sshd-rollback "SSH change not confirmed; restoring previous configuration (backup: $BACKUP)"
 
