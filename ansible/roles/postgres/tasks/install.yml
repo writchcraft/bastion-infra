@@ -30,6 +30,7 @@
 # The package creates the "main" cluster on install (postgresql-common).
 - name: Install PostgreSQL {{ postgres_version }}
   ansible.builtin.apt:
+    lock_timeout: 300
     name:
       - "postgresql-{{ postgres_version }}"
       - "postgresql-client-{{ postgres_version }}"

@@ -60,11 +60,13 @@
 
 - name: Refresh the apt cache
   ansible.builtin.apt:
+    lock_timeout: 300
     update_cache: true
     cache_valid_time: "{{ common_apt_cache_valid_time }}"
 
 - name: Install baseline packages
   ansible.builtin.apt:
+    lock_timeout: 300
     name: "{{ common_packages + common_extra_packages }}"
     state: present
 
@@ -72,6 +74,7 @@
 # as kernels are installed, but nothing is removed.
 - name: Apply pending package upgrades
   ansible.builtin.apt:
+    lock_timeout: 300
     upgrade: safe
     force_apt_get: true
   when: common_upgrade_packages
@@ -109,6 +112,7 @@
   block:
     - name: Install systemd-timesyncd
       ansible.builtin.apt:
+        lock_timeout: 300
         name: systemd-timesyncd
         state: present
 

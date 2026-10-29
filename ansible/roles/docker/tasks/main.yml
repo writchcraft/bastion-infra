@@ -21,6 +21,7 @@
 
 - name: Remove conflicting container packages
   ansible.builtin.apt:
+    lock_timeout: 300
     name: "{{ docker_conflicting_packages }}"
     state: absent
   when: docker_remove_conflicting_packages | bool
@@ -81,6 +82,7 @@
 
 - name: Install Docker Engine and the Compose plugin
   ansible.builtin.apt:
+    lock_timeout: 300
     name: "{{ docker_packages }}"
     state: present
     update_cache: "{{ docker_repository is changed or docker_legacy_source.stat.exists }}"

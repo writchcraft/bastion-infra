@@ -5,6 +5,7 @@
 
 - name: Install UFW
   ansible.builtin.apt:
+    lock_timeout: 300
     name: ufw
     state: present
 

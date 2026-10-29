@@ -10,6 +10,7 @@
 
 - name: Install the OpenSSH server
   ansible.builtin.apt:
+    lock_timeout: 300
     name: openssh-server
     state: present
 

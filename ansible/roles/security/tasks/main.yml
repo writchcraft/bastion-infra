@@ -1,11 +1,16 @@
 ---
 # --- Automatic security updates ------------------------------------------------------
+# Every apt task in this repository sets lock_timeout: installing a package can
+# start apt-daily/unattended-upgrades, which holds the dpkg lock for a while and
+# would otherwise fail the next apt task (seen in CI on fail2ban).
+
 
 - name: Configure unattended security upgrades
   when: security_unattended_upgrades | bool
   block:
     - name: Install unattended-upgrades
       ansible.builtin.apt:
+        lock_timeout: 300
         name: unattended-upgrades
         state: present
 
@@ -40,6 +45,7 @@
   block:
     - name: Install fail2ban
       ansible.builtin.apt:
+        lock_timeout: 300
         name:
           - fail2ban
           - python3-systemd  # journal backend
