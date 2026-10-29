@@ -16,7 +16,9 @@ enable_monitoring: true
 server_timezone: Etc/UTC
 server_locale: en_US.UTF-8
 # The runner image carries hundreds of packages; upgrading them all would
-# dominate the job without testing anything Bastion-specific.
+# dominate the job without testing anything Bastion-specific. Disabling it also
+# keeps the idempotency gate deterministic: a package published between the
+# first and second deployment must not register as Bastion changing state.
 common_upgrade_packages: false
 
 admin_users:

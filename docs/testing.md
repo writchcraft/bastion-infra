@@ -75,7 +75,9 @@ A second `server.yml` run against a configured server should report
 - image pulls use `policy: missing`, and `apt` uses `cache_valid_time`.
 
 The one legitimate exception is a package update published between the two
-runs.
+runs. CI removes it by setting `common_upgrade_packages: false` in the CI
+inventory, so the gate measures Bastion, not the Ubuntu mirrors. Normal
+deployments keep the default (`true`).
 
 ## What is not tested automatically
 

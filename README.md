@@ -29,7 +29,7 @@ changes. Run the verification and the server proves it.
 | **Docker** | Engine and Compose plugin from Docker's signed repo, validated `daemon.json`, log rotation, no TCP socket |
 | **PostgreSQL** | PGDG packages, SCRAM auth, TLS-only remote access per database, validated config with restart only when required, nightly `pg_dump` timer |
 | **Monitoring** | node_exporter, Prometheus and Grafana with a provisioned host dashboard and alert rules, without bypassing the firewall |
-| **Verification** | 28+ evidence-based checks and a Markdown report: services, effective config, open ports, endpoints, credentials |
+| **Verification** | 28 evidence-based checks (29 when default accounts are configured to be locked) and a Markdown report: services, effective config, open ports, endpoints, credentials |
 
 ## Architecture
 
@@ -150,7 +150,7 @@ The decisions that matter most (all explained in [docs/security.md](docs/securit
 | Playbook structure | `ansible-playbook --syntax-check` |
 | Shell scripts | `shellcheck` |
 | Real deployment | CI job on a GitHub `ubuntu-24.04` VM: bootstrap locally, then deploy over real SSH to itself |
-| Does it work? | `verify.yml` (28+ checks; report shown on the run page and uploaded as an artifact) |
+| Does it work? | `verify.yml` (28 checks in the CI and development inventories; report shown on the run page and uploaded as an artifact) |
 | Idempotency | second `server.yml` run in CI must report `changed=0`; the gate script has its own test (`scripts/test-idempotency-check.sh`) |
 
 The CI target is a freshly created, throw-away GitHub runner VM, but it is
@@ -161,17 +161,37 @@ covered: [docs/testing.md](docs/testing.md).
 
 ## Evidence
 
-The proof is the CI run itself: every push to `main` runs the full lifecycle
-and the [workflow history](https://github.com/writchcraft/bastion-infra/actions/workflows/ci.yml)
-shows it green. Each run:
+Two different things prove the claim, and they are not the same test:
 
+| | GitHub Actions | Multipass VM |
+|---|---|---|
+| What it is | Automated run on a throw-away `ubuntu-24.04` runner (not a pristine image: Docker and PostgreSQL are preinstalled) | A genuinely fresh Ubuntu 24.04 VM created by `scripts/dev-vm.sh` |
+| When | Every push to `main` and every pull request | Manually, on demand ([docs/demo.md](docs/demo.md)) |
+
+**Automated (GitHub Actions).** The [workflow history](https://github.com/writchcraft/bastion-infra/actions/workflows/ci.yml)
+shows the full lifecycle on every push. Each run:
+
+- lints (`yamllint`, `ansible-lint`, syntax checks, `shellcheck`) and tests the idempotency gate itself;
 - bootstraps an administrator, deploys over real SSH, and runs `verify.yml`;
-- prints the generated report (one row per check) on the run's summary page and uploads it as the `verify-report` artifact;
-- reruns `server.yml` through `idempotency-check.sh`, which exits non-zero and lists the offending tasks if anything reports `changed`, or if no play recap is produced; the recap is also shown on the run's summary page.
+- prints the verification report (one row per check) on the run's summary page and uploads it as the `verify-report` artifact;
+- reruns `server.yml` through `idempotency-check.sh`, which exits non-zero and lists the offending tasks if anything reports `changed` or if no play recap is produced; the recap is shown on the run's summary page.
 
-The step-by-step local demonstration (fresh Multipass VM, expected output at
-each stage) is in [docs/demo.md](docs/demo.md). Terminal captures and a
-Grafana screenshot have not been added to the repository.
+The CI inventory sets `common_upgrade_packages: false`, so a package that
+Ubuntu publishes between the two deployments cannot cause a false
+idempotency failure. The default (`true`) is unchanged for real deployments.
+
+Run that proves it: [CI run #10, commit 0f85dc6](https://github.com/writchcraft/bastion-infra/actions/runs/40867840327)
+(all steps green). The run summary page holds the report and the second-run
+recap (`changed=0`).
+
+**Manual (fresh Multipass VM).** Follow [docs/demo.md](docs/demo.md). Paste your
+own captured output below when you have it.
+
+<!-- EVIDENCE-TO-PASTE: output of `make verify` ("N/N checks passed") and
+     `make idempotency` (play recap with changed=0) from a fresh Multipass VM.
+     Replace this comment with a fenced text block. Do not edit the output. -->
+
+Terminal captures and a Grafana screenshot are not part of the repository.
 
 ## Project structure
 
@@ -197,6 +217,7 @@ bastion-infra/
 │   ├── init-vault.sh             generate an encrypted vault with random secrets
 │   └── idempotency-check.sh      fail if a rerun changes anything
 ├── .github/workflows/ci.yml      lint, syntax, converge, verify, idempotency
+├── LICENSE
 ├── Makefile
 ├── requirements.yml              Ansible collections
 └── requirements-dev.txt          control-node tooling
@@ -229,4 +250,4 @@ bastion-infra/
 
 ## License
 
-A licence has not been chosen yet.
+[MIT](LICENSE) © 2026 writchcraft
